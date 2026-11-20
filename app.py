@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()  # GROQ_API_KEY etc. from .env, before the checker reads its settings
 
-from checker.llm_checks import DEFAULT_MODEL  # noqa: E402
+from checker.llm_checks import MODELS  # noqa: E402
 from checker.loader import SUPPORTED_EXTENSIONS, read_document
 from checker.report import run_checks, summary, to_dataframe, to_markdown
 from checker.styles import guess_style, load_styles
@@ -22,7 +22,7 @@ if not styles:
 with st.sidebar:
     st.header("Settings")
     use_llm = st.toggle("Use AI checks", value=True)
-    model = st.text_input("Groq model", value=DEFAULT_MODEL, disabled=not use_llm)
+    model = st.selectbox("Groq model", MODELS, disabled=not use_llm)
     st.caption("Rule-based checks always run. AI checks use Groq and need GROQ_API_KEY.")
 
 paste_tab, upload_tab = st.tabs(["Paste text", "Upload file"])

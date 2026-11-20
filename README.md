@@ -116,11 +116,15 @@ Use plain checks wherever possible; use `llm` only for rules that need understan
 
 ## Choosing a model
 
-Set the model in the app's sidebar, or with `GROQ_MODEL` in `.env` / Secrets.
+Pick the model from the dropdown in the app's sidebar. The list and the default come from `.env` /
+Secrets, so no code change is needed when Groq retires or adds models:
 
-Default: `qwen/qwen3.8-27b` (`openai/gpt-oss-20b` and `openai/gpt-oss-120b` also tested). Any chat
-model listed at https://console.groq.com/docs/models works. Model names change over time; if a model
-is retired, pick another from that page.
+```toml
+GROQ_MODEL = "qwen/qwen3.8-27b"                                              # default
+GROQ_MODELS = "qwen/qwen3.8-27b,openai/gpt-oss-20b,openai/gpt-oss-120b"      # dropdown list
+```
+
+Available models: https://console.groq.com/docs/models
 
 ## Tests
 

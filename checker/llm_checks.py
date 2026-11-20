@@ -9,6 +9,14 @@ import os
 from checker.result import FAIL, PASS, SKIP, WARN, CheckResult
 
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
+# Models offered in the app's dropdown (all tested on Groq). When Groq retires or adds models,
+# override with GROQ_MODELS="model-a,model-b" in .env / Secrets instead of changing code.
+MODELS = list(
+    dict.fromkeys(
+        [DEFAULT_MODEL]
+        + [m.strip() for m in os.getenv("GROQ_MODELS", "qwen/qwen3.8-27b,openai/gpt-oss-20b,openai/gpt-oss-120b").split(",") if m.strip()]
+    )
+)
 MAX_CHARS = 8000  # models lose track of very long input
 
 PROMPT = """You are reviewing a team document against ONE rule.
