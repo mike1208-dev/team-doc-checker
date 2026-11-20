@@ -3,7 +3,7 @@ from dataclasses import dataclass
 PASS = "PASS"
 FAIL = "FAIL"
 WARN = "WARN"  # a possible problem a person should look at
-SKIP = "SKIP"  # the check could not run (AI turned off, Ollama not running, unknown check type)
+SKIP = "SKIP"  # the check could not run (AI turned off, no API key, unknown check type)
 
 ICONS = {PASS: "✅", FAIL: "❌", WARN: "⚠️", SKIP: "⏭️"}
 

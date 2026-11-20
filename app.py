@@ -3,15 +3,15 @@ from dotenv import load_dotenv
 
 load_dotenv()  # GROQ_API_KEY etc. from .env, before the checker reads its settings
 
-from checker.llm_checks import DEFAULT_MODELS, DEFAULT_PROVIDER, PROVIDERS  # noqa: E402
+from checker.llm_checks import DEFAULT_MODEL  # noqa: E402
 from checker.loader import SUPPORTED_EXTENSIONS, read_document
 from checker.report import run_checks, summary, to_dataframe, to_markdown
 from checker.styles import guess_style, load_styles
 
 AUTO_DETECT = "Auto-detect"
 
-st.set_page_config(page_title="Team Document Checker", page_icon="📝", layout="wide")
-st.title("📝 Team Document Checker")
+st.set_page_config(page_title="ZeeCheck", page_icon="📝", layout="wide")
+st.title("📝 ZeeCheck: Team Document Checker")
 st.caption("Paste or upload a document and check it against the team's rules.")
 
 styles = load_styles()
@@ -22,17 +22,8 @@ if not styles:
 with st.sidebar:
     st.header("Settings")
     use_llm = st.toggle("Use AI checks", value=True)
-    provider = st.radio(
-        "AI provider",
-        PROVIDERS,
-        index=PROVIDERS.index(DEFAULT_PROVIDER),
-        format_func={"groq": "Groq (cloud, free tier)", "ollama": "Ollama (local)"}.get,
-        disabled=not use_llm,
-    )
-    model = st.text_input("Model", value=DEFAULT_MODELS[provider], key=f"model_{provider}", disabled=not use_llm)
-    st.caption(
-        "Rule-based checks always run. Groq needs GROQ_API_KEY; Ollama needs Ollama running with the model pulled."
-    )
+    model = st.text_input("Groq model", value=DEFAULT_MODEL, disabled=not use_llm)
+    st.caption("Rule-based checks always run. AI checks use Groq and need GROQ_API_KEY.")
 
 paste_tab, upload_tab = st.tabs(["Paste text", "Upload file"])
 with paste_tab:
@@ -64,7 +55,7 @@ if st.button("Check document", type="primary"):
         st.stop()
 
     with st.spinner("Checking..."):
-        results = run_checks(text, style, use_llm=use_llm, provider=provider, model=model)
+        results = run_checks(text, style, use_llm=use_llm, model=model)
     # Keep the report in the session so it survives the rerun caused by the download buttons
     st.session_state["report"] = {
         "results": results,

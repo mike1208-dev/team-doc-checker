@@ -9,8 +9,7 @@ def run_checks(
     text: str,
     style: Style,
     use_llm: bool = True,
-    provider: str = llm_checks.DEFAULT_PROVIDER,
-    model: str | None = None,
+    model: str = llm_checks.DEFAULT_MODEL,
     client=None,
 ) -> list[CheckResult]:
     """
@@ -21,7 +20,7 @@ def run_checks(
         check = rule.get("check")
         if check == "llm":
             if use_llm:
-                results.append(llm_checks.llm_check(text, rule, provider=provider, model=model, client=client))
+                results.append(llm_checks.llm_check(text, rule, model=model, client=client))
             else:
                 results.append(CheckResult.from_rule(rule, SKIP, message="AI checks are turned off."))
         elif check in basic_checks.CHECKS:

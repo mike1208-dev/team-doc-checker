@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,15 +20,19 @@ DAILY_REPORT = """# Daily report
 
 
 class FakeClient:
-    """Stands in for ollama.Client so tests don't need Ollama running."""
+    """Stands in for groq.Groq so tests don't need an API key or network."""
 
     def __init__(self, content=None, error=None):
         self.content, self.error = content, error
+        self.calls = []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
-    def chat(self, **kwargs):
+    def _create(self, **kwargs):
+        self.calls.append(kwargs)
         if self.error:
             raise self.error
-        return {"message": {"content": self.content}}
+        message = SimpleNamespace(content=self.content)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
 
 @pytest.fixture(scope="module")
@@ -67,7 +72,7 @@ def test_run_checks_without_ai(styles):
         (FakeClient(json.dumps({"verdict": "fail", "reason": "vague", "quote": "worked on stuff"})), FAIL),
         (FakeClient(json.dumps({"verdict": "unsure", "reason": "?", "quote": ""})), WARN),
         (FakeClient("not json"), WARN),
-        (FakeClient(error=ConnectionError("Ollama is not running")), SKIP),
+        (FakeClient(error=ConnectionError("Groq is unreachable")), SKIP),
     ],
 )
 def test_llm_rule_results(client, expected):
@@ -107,26 +112,16 @@ def test_read_docx_keeps_headings():
     assert read_document("a.docx", buffer.getvalue()) == "## Done\nFixed the login bug."
 
 
-def test_groq_client_answers_like_ollama():
-    from types import SimpleNamespace
-
-    from checker.llm_checks import GroqClient
-
-    calls = {}
-
-    def create(**kwargs):
-        calls.update(kwargs)
-        message = SimpleNamespace(content='{"verdict": "pass"}')
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
-
-    sdk = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    response = GroqClient(sdk).chat(model="m", messages=[], format="json", options={"temperature": 0})
-    assert response == {"message": {"content": '{"verdict": "pass"}'}}
-    assert calls["response_format"] == {"type": "json_object"}
+def test_llm_check_asks_groq_for_json():
+    client = FakeClient(json.dumps({"verdict": "pass", "reason": "ok", "quote": ""}))
+    style = Style(id="t", name="Test", rules=[{"id": "clear", "check": "llm", "question": "Is it clear?"}])
+    run_checks("Some text.", style, model="m", client=client)
+    assert client.calls[0]["model"] == "m"
+    assert client.calls[0]["response_format"] == {"type": "json_object"}
 
 
 def test_missing_groq_package_or_key_is_skipped(monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     style = Style(id="t", name="Test", rules=[{"id": "clear", "check": "llm", "question": "Is it clear?"}])
-    [result] = run_checks("Some text.", style, provider="groq")
+    [result] = run_checks("Some text.", style)
     assert result.status == SKIP
