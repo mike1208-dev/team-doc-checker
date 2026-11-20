@@ -1,0 +1,64 @@
+import pandas as pd
+
+from checker import basic_checks, llm_checks
+from checker.result import ICONS, PASS, SKIP, CheckResult
+from checker.styles import Style
+
+
+def run_checks(
+    text: str,
+    style: Style,
+    use_llm: bool = True,
+    provider: str = llm_checks.DEFAULT_PROVIDER,
+    model: str | None = None,
+    client=None,
+) -> list[CheckResult]:
+    """
+    Runs every rule of the style on the text, in the order they appear in the YAML file.
+    """
+    results = []
+    for rule in style.rules:
+        check = rule.get("check")
+        if check == "llm":
+            if use_llm:
+                results.append(llm_checks.llm_check(text, rule, provider=provider, model=model, client=client))
+            else:
+                results.append(CheckResult.from_rule(rule, SKIP, message="AI checks are turned off."))
+        elif check in basic_checks.CHECKS:
+            results.append(basic_checks.CHECKS[check](text, rule))
+        else:
+            results.append(CheckResult.from_rule(rule, SKIP, message=f"Unknown check type '{check}' in the rules file."))
+    return results
+
+
+def summary(results: list[CheckResult]) -> str:
+    checked = [r for r in results if r.status != SKIP]
+    passed = sum(r.status == PASS for r in checked)
+    skipped = len(results) - len(checked)
+    text = f"{passed} / {len(checked)} rules passed"
+    return text + (f" ({skipped} skipped)" if skipped else "")
+
+
+def to_dataframe(results: list[CheckResult]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"Result": ICONS[r.status], "Rule": r.title, "Where": r.where, "Why / suggested fix": r.message}
+            for r in results
+        ]
+    )
+
+
+def to_markdown(results: list[CheckResult], style_name: str, document_name: str) -> str:
+    lines = [
+        f"# Check report: {document_name}",
+        "",
+        f"- **Style:** {style_name}",
+        f"- **Overall:** {summary(results)}",
+        "",
+        "| Result | Rule | Where | Why / suggested fix |",
+        "|---|---|---|---|",
+    ]
+    for r in results:
+        cells = [ICONS[r.status], r.title, r.where, r.message]
+        lines.append("| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |")
+    return "\n".join(lines) + "\n"

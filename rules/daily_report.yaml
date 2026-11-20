@@ -1,0 +1,35 @@
+# EXAMPLE rules — replace with the team's real rules when they are shared.
+name: Daily report
+description: What I did today, what I'll do next, and what is blocking me.
+
+# Words that suggest a document is this style (used by "Auto-detect")
+detect: ["daily report", "today", "tomorrow", "blockers"]
+
+rules:
+  - id: has_sections
+    title: Has Done / Next / Blockers sections
+    check: required_sections
+    sections:
+      - ["Done", "Completed", "Today"]
+      - ["Next", "Plan", "Tomorrow"]
+      - ["Blockers", "Issues", "Problems"]
+
+  - id: no_secrets
+    title: No secrets (keys, passwords)
+    check: no_secrets
+
+  - id: length
+    title: Short enough to read quickly
+    check: word_count
+    min: 30
+    max: 400
+
+  - id: short_sentences
+    title: Plain English (no very long sentences)
+    check: long_sentences
+    max_words: 35
+
+  - id: specific
+    title: Tasks are specific
+    check: llm
+    question: "Does each completed task say concretely what was done (not vague, like 'worked on stuff')?"
