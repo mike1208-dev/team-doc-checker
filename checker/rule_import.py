@@ -20,6 +20,8 @@ Check types you can use:
 - forbidden_phrases: words that must not appear. Options: "phrases": list.
 - must_contain: text that must appear. Options: "phrases": list.
 - pattern: a regular expression that must (or must not) appear. Options: "pattern", "must": "match" or "not_match", "label": what it means.
+- mention_at_top: someone must be tagged with @ in the first lines. Options: "lines" (number, default 3).
+- working_hours: these sections must give working hours. Options: "sections", same shape as required_sections.
 - llm: a rule that needs understanding, asked as a yes/no question where "yes" means the rule is followed. Options: "question".
 
 Prefer the simple check types; use llm only when a rule needs understanding.

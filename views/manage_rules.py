@@ -26,6 +26,8 @@ CHECK_LABELS = {
     "forbidden_phrases": "Forbidden words",
     "must_contain": "Must contain text",
     "pattern": "Pattern (regular expression)",
+    "mention_at_top": "Tags someone at the top",
+    "working_hours": "Working hours in sections",
     "llm": "AI question",
 }
 DEFAULT_OPTIONS = {
@@ -35,6 +37,8 @@ DEFAULT_OPTIONS = {
     "forbidden_phrases": {"phrases": []},
     "must_contain": {"phrases": []},
     "pattern": {"pattern": "", "must": "match", "label": ""},
+    "mention_at_top": {"lines": 3},
+    "working_hours": {"sections": []},
     "llm": {"question": ""},
 }
 
@@ -81,7 +85,7 @@ def rule_fields(rule: dict, key: str) -> None:
     rule["id"] = col2.text_input("Rule ID", rule.get("id", ""), key=f"{key}_id")
     check = rule.get("check")
 
-    if check == "required_sections":
+    if check in ("required_sections", "working_hours"):
         text = st.text_area(
             "Sections, one per line. Accept alternatives with /, e.g. Blockers / Issues",
             list_to_lines(rule.get("sections", [])),
@@ -121,6 +125,10 @@ def rule_fields(rule: dict, key: str) -> None:
     elif check == "llm":
         rule["question"] = st.text_area(
             "Yes/no question for the AI ('yes' = the rule is followed)", rule.get("question", ""), key=f"{key}_question"
+        )
+    elif check == "mention_at_top":
+        rule["lines"] = int(
+            st.number_input("Lines that count as the top", min_value=1, value=int(rule.get("lines", 3)), key=f"{key}_lines")
         )
     elif check == "no_secrets":
         st.caption("No options: finds API keys, tokens and passwords.")
@@ -263,6 +271,21 @@ with edit_tab:
                 st.session_state.draft_for = None  # reload the saved version from the database
                 st.session_state.flash = f"Saved '{style.name}'. Checks use it right away."
                 st.rerun()
+
+    built_in = YamlStore().list_styles().get(choice)
+    if built_in:
+        with col2.popover("🔄 Use the built-in rules"):
+            st.write(f"Replace the rules of **{draft['name']}** with the built-in ones? You can undo it from the History tab.")
+            if st.button("Yes, replace them", key=f"{v}_confirm_built_in"):
+                try:
+                    store.save_style(built_in, editor)
+                except StoreError as e:
+                    st.error(str(e))
+                else:
+                    clear_styles_cache()
+                    st.session_state.draft_for = None  # reload the saved version from the database
+                    st.session_state.flash = f"'{built_in.name}' now uses the built-in rules."
+                    st.rerun()
 
     if not is_new:
         with col2.popover("🗑️ Delete style"):

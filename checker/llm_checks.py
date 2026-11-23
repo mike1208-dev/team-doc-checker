@@ -1,11 +1,12 @@
 """
-Checks that need understanding ("Is it clear?", "Does the summary match?"), answered by an LLM
-through Groq's cloud API (free tier, needs GROQ_API_KEY, nothing to download).
+Checks that need understanding ("Is it clear?", "Does the summary match?"), answered by an LLM: through
+Groq's cloud API (free tier, needs GROQ_API_KEY) or a small model inside the app (see local_model.py).
 """
 
 import json
 import os
 
+from checker import local_model
 from checker.result import FAIL, PASS, SKIP, WARN, CheckResult
 
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
@@ -34,7 +35,9 @@ Answer only with JSON in exactly this format:
 VERDICTS = {"pass": PASS, "fail": FAIL}
 
 
-def default_client():
+def default_client(model: str = DEFAULT_MODEL):
+    if model == local_model.MODEL_ID:
+        return local_model.get_client()
     from groq import Groq
 
     return Groq()  # reads GROQ_API_KEY
@@ -47,7 +50,7 @@ def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) ->
     truncated = len(text) > MAX_CHARS
     prompt = PROMPT.format(question=rule.get("question", rule.get("title", "")), text=text[:MAX_CHARS])
     try:
-        client = client or default_client()
+        client = client or default_client(model)
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
@@ -57,7 +60,7 @@ def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) ->
         answer = json.loads(response.choices[0].message.content)
     except json.JSONDecodeError:
         return CheckResult.from_rule(rule, WARN, message="The AI gave an unreadable answer. Check this rule by hand.")
-    except Exception as e:  # no API key, rate limit, model retired, ...
+    except Exception as e:  # no API key, rate limit, model retired, model file missing, ...
         return CheckResult.from_rule(rule, SKIP, message=f"AI check skipped: {e}")
 
     status = VERDICTS.get(str(answer.get("verdict", "")).lower(), WARN)

@@ -33,11 +33,13 @@ def run_checks(
     return results
 
 
+def count(results: list[CheckResult], status: str) -> int:
+    return sum(r.status == status for r in results)
+
+
 def summary(results: list[CheckResult]) -> str:
-    checked = [r for r in results if r.status != SKIP]
-    passed = sum(r.status == PASS for r in checked)
-    skipped = len(results) - len(checked)
-    text = f"{passed} / {len(checked)} rules passed"
+    skipped = count(results, SKIP)
+    text = f"{count(results, PASS)} / {len(results) - skipped} rules passed"
     return text + (f" ({skipped} skipped)" if skipped else "")
 
 

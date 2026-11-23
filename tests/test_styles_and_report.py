@@ -10,9 +10,9 @@ from checker.result import FAIL, PASS, SKIP, WARN
 from checker.styles import Style, guess_style, load_styles
 
 DAILY_REPORT = """# Daily report
-## Done
+## Yesterday
 - Fixed the login bug on the settings page.
-## Next
+## Today
 - Write tests for the login flow.
 ## Blockers
 - None.
@@ -61,8 +61,8 @@ def test_run_checks_without_ai(styles):
     results = run_checks(DAILY_REPORT, styles["daily_report"], use_llm=False)
     by_id = {r.rule_id: r for r in results}
     assert by_id["has_sections"].status == PASS
-    assert by_id["specific"].status == SKIP
-    assert summary(results).endswith("(1 skipped)")
+    assert by_id["concrete_tasks"].status == SKIP
+    assert summary(results).endswith("(6 skipped)")
 
 
 @pytest.mark.parametrize(

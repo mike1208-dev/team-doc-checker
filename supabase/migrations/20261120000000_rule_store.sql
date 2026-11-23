@@ -1,4 +1,4 @@
--- ZeeCheck rule store: document styles and their rules, plus a history of every change.
+-- ZeeChecker rule store: document styles and their rules, plus a history of every change.
 -- Safe to run more than once.
 
 create table if not exists public.styles (

@@ -47,11 +47,32 @@ def memory_store(monkeypatch):
 def test_check_page_runs_rule_checks(monkeypatch):
     monkeypatch.setattr(checker.store, "get_store", lambda: YamlStore())
     at = AppTest.from_file("../views/check.py", default_timeout=30).run()
-    at.text_area[0].input("# Daily report\n## Done\n- Fixed the login bug.\n## Next\n- Tests.").run()
     at.sidebar.toggle[0].set_value(False).run()
-    at.button[0].click().run()
+    next(b for b in at.button if b.label == "Try an example").click().run()
+    next(b for b in at.button if b.label == "Check daily report").click().run()
     assert not at.exception
-    assert "rules passed" in at.subheader[0].value
+    # The example has all sections and tags the reviewer, but gives no hours for Today
+    assert [m.value for m in at.metric] == ["2", "1", "0", "6"]
+    assert any("2 / 3 rules passed" in m.value for m in at.markdown)
+
+    # A new check that can't run must not leave the old result on the page
+    at.text_area[0].input("").run()
+    next(b for b in at.button if b.label == "Check daily report").click().run()
+    assert at.warning and not at.metric
+
+
+def test_check_page_offers_the_local_model_only_when_configured(monkeypatch):
+    monkeypatch.setattr(checker.store, "get_store", lambda: YamlStore())
+    for name in ("LOCAL_MODEL_PATH", "LOCAL_MODEL_REPO", "LOCAL_MODEL_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    at = AppTest.from_file("../views/check.py", default_timeout=30).run()
+    options = list(at.sidebar.selectbox[0].options)
+    assert all(option.startswith("Groq") for option in options)
+
+    monkeypatch.setenv("LOCAL_MODEL_PATH", "model.gguf")
+    monkeypatch.setenv("LOCAL_MODEL_LABEL", "Test model")
+    at = AppTest.from_file("../views/check.py", default_timeout=30).run()
+    assert list(at.sidebar.selectbox[0].options) == [*options, "Test model"]
 
 
 def test_manage_page_needs_the_password(memory_store):
@@ -86,6 +107,19 @@ def test_manage_page_loads_examples_edits_and_restores(memory_store):
     # Restore the old version from History
     next(b for b in at.button if b.label == "↩️ Restore this version").click().run()
     assert memory_store.styles["daily_report"].name == "Daily report"
+
+
+def test_manage_page_replaces_old_rules_with_the_built_in_ones(memory_store):
+    memory_store.styles["daily_report"] = Style(id="daily_report", name="Old", rules=[{"id": "old", "check": "no_secrets"}])
+    at = AppTest.from_file("../views/manage_rules.py", default_timeout=30).run()
+    at.text_input[0].input("secret")
+    at.text_input[1].input("Mike")
+    at.button[0].click().run()
+    at.selectbox(key="style_choice").set_value("daily_report").run()
+    next(b for b in at.button if b.label == "Yes, replace them").click().run()
+    assert not at.exception
+    assert len(memory_store.styles["daily_report"].rules) == 9
+    assert memory_store.rows[0]["name"] == "Old"
 
 
 def test_manage_page_creates_a_new_style(memory_store):

@@ -11,6 +11,7 @@ CHECK_TYPES = [*CHECKS, "llm"]
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,49}$")
 REQUIRED_OPTIONS = {
     "required_sections": "sections",
+    "working_hours": "sections",
     "forbidden_phrases": "phrases",
     "must_contain": "phrases",
     "pattern": "pattern",

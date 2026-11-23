@@ -23,12 +23,35 @@ SECRET_PATTERNS = [
 ]
 
 
+# Slack shortcodes (:dart:) and emoji characters
+EMOJI = r"(?::[a-z][a-z0-9_+-]*:|[\u2600-\u27BF\U0001F300-\U0001FAFF]\uFE0F?)"
+BULLET = r"[-*+•◦▪]\uFE0E?\s+"
+DURATION = r"\d+(?:\.\d+)?\s*-?\s*(?:hours?|hrs?|h|minutes?|mins?)\b"
+# In a task line a duration only counts as working time in brackets, in backticks or after a dash at the end,
+# so that "cut the build time from 2 hours to 5 minutes" doesn't
+TASK_DURATION = rf"[(\[`]\s*{DURATION}[^)\]`]*[)\]`]|[-–—:]\s*{DURATION}[*_.\s]*$"
+SECTION_END = ["Blockers", "Notes"]  # the sections after the ones with hours
+
+
 def _normalize_heading(line: str) -> str:
-    # "## 1. Done:", "**Done**", "Done:" -> "done"
-    line = re.sub(r"^#+\s*", "", line.strip())
+    # "## 1. Done:", "**Done**", "Done:" -> "done"; Slack: "• :dart: *Today (7 hours)*" -> "today"
+    line = re.sub(rf"^{BULLET}(?=[*_ ]*{EMOJI})", "", line.strip())  # a bullet is only a heading if an emoji follows
+    line = re.sub(EMOJI, " ", line).strip()
+    line = re.sub(r"^#+\s*", "", line)
     line = re.sub(r"^\d+[.)]\s*", "", line)
-    line = line.strip("*_ ").rstrip(":").strip("*_ ")
-    return line.lower()
+    line = line.strip("*_ ").rstrip(":. ").strip("*_ ")
+    line = re.sub(r"\s*\([^()]*\)$", "", line).rstrip(":*_ ")
+    return re.sub(r"\s+", " ", line).lower()
+
+
+def _is_heading(line: str, names: list[str]) -> bool:
+    heading = _normalize_heading(line)
+    parts = {heading, *(part.strip("*_: ") for part in heading.split("/"))}  # "Blockers / Notes" counts as both
+    return any(name.lower() in parts or heading.startswith(name.lower() + ":") for name in names)
+
+
+def _names(section: str | list[str]) -> list[str]:
+    return [section] if isinstance(section, str) else section
 
 
 def _content_lines(text: str):
@@ -50,14 +73,11 @@ def required_sections(text: str, rule: dict) -> CheckResult:
     rule.sections: list of section names. An item can also be a list of accepted alternatives,
     e.g. ["Blockers", "Issues"].
     """
-    lines = [_normalize_heading(line) for line in text.splitlines()]
+    lines = text.splitlines()
     missing = []
     for section in rule.get("sections", []):
-        names = [section] if isinstance(section, str) else section
-        found = any(
-            line == name.lower() or line.startswith(name.lower() + ":") for line in lines for name in names
-        )
-        if not found:
+        names = _names(section)
+        if not any(_is_heading(line, names) for line in lines):
             missing.append(" / ".join(names))
     if missing:
         return CheckResult.from_rule(rule, FAIL, message=f"Missing section(s): {', '.join(missing)}. Add a heading for each.")
@@ -158,6 +178,40 @@ def pattern(text: str, rule: dict) -> CheckResult:
     return CheckResult.from_rule(rule, FAIL, message=f"No {label} found. Add one.")
 
 
+def mention_at_top(text: str, rule: dict) -> CheckResult:
+    """
+    rule.lines: how many lines count as the top (default 3, empty lines are ignored).
+    """
+    lines = [line for line in text.splitlines() if line.strip()][: rule.get("lines", 3)]
+    # "@Dan" or Slack's "<@U0123|Dan>", but not an email address
+    if any(re.search(r"(?<![\w.+-])@\w", line) for line in lines):
+        return CheckResult.from_rule(rule, PASS)
+    return CheckResult.from_rule(rule, FAIL, message="No reviewer is tagged at the top. Add one, e.g. @Name.")
+
+
+def working_hours(text: str, rule: dict) -> CheckResult:
+    """
+    rule.sections: sections that must give hours, same shape as in required_sections. The hours can be in
+    the heading ("Today (7 hours)") or on a task ("Write tests (2 hours)").
+    """
+    sections = [_names(section) for section in rule.get("sections", [])]
+    found, current = set(), None
+    for line in text.splitlines():
+        heading = next((i for i, names in enumerate(sections) if _is_heading(line, names)), None)
+        if heading is not None:
+            current = heading
+        elif _is_heading(line, SECTION_END):
+            current = None
+        if current is not None and re.search(DURATION if heading is not None else TASK_DURATION, line, re.IGNORECASE):
+            found.add(current)
+    missing = [" / ".join(names) for i, names in enumerate(sections) if i not in found]
+    if missing:
+        return CheckResult.from_rule(
+            rule, FAIL, message=f"No hours for: {', '.join(missing)}. Add them, e.g. {sections[-1][0]} (7 hours)."
+        )
+    return CheckResult.from_rule(rule, PASS)
+
+
 CHECKS = {
     "required_sections": required_sections,
     "no_secrets": no_secrets,
@@ -166,4 +220,6 @@ CHECKS = {
     "forbidden_phrases": forbidden_phrases,
     "must_contain": must_contain,
     "pattern": pattern,
+    "mention_at_top": mention_at_top,
+    "working_hours": working_hours,
 }
