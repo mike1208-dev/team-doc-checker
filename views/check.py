@@ -3,12 +3,10 @@ import time
 
 import streamlit as st
 
-from checker import local_model
-from checker.llm_checks import MODELS
 from checker.loader import SUPPORTED_EXTENSIONS, read_document
 from checker.report import count, run_checks, summary, to_dataframe, to_markdown
 from checker.result import FAIL, ICONS, PASS, SKIP, WARN
-from views.shared import load_styles_or_fallback
+from views.shared import ai_models, load_styles_or_fallback, model_label, privacy_note
 
 STYLE_ID = "daily_report"  # the only document style in v1
 JAPANESE = re.compile(r"[぀-ヿ一-鿿]")
@@ -24,10 +22,6 @@ EXAMPLE = """@Sam Please check my daily report.
 🚧 Blockers
 - None
 """
-
-
-def model_label(model: str) -> str:
-    return local_model.label() if model == local_model.MODEL_ID else f"Groq · {model}"
 
 
 def load_example():
@@ -55,14 +49,11 @@ if style is None:
 with st.sidebar:
     st.header("Settings")
     use_llm = st.toggle("Use AI checks", value=True)
-    models = [*MODELS, local_model.MODEL_ID] if local_model.is_configured() else MODELS
-    model = st.selectbox("AI model", models, format_func=model_label, disabled=not use_llm)
-    if not use_llm:
-        st.caption("Only the code rules run. The report isn't sent to an AI service.")
-    elif model == local_model.MODEL_ID:
-        st.caption("The AI model runs inside the app. The report isn't sent to an AI service.")
+    model = st.selectbox("AI model", ai_models(), format_func=model_label, disabled=not use_llm)
+    if use_llm:
+        st.caption(privacy_note(model, "report"))
     else:
-        st.caption("The report is sent to Groq for the AI checks.")
+        st.caption("Only the code rules run. The report isn't sent to an AI service.")
     with st.expander(f"Rules ({len(style.rules)})"):
         for rule in style.rules:
             st.markdown(f"- {'🤖' if rule.get('check') == 'llm' else '⚙️'} {rule.get('title', rule.get('id'))}")

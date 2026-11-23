@@ -6,6 +6,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import checker.store
+from checker import llm_checks, local_model
 from checker.store import YamlStore
 from checker.styles import Style
 
@@ -61,7 +62,7 @@ def test_check_page_runs_rule_checks(monkeypatch):
     assert at.warning and not at.metric
 
 
-def test_check_page_offers_the_local_model_only_when_configured(monkeypatch):
+def test_check_page_uses_the_local_model_first_when_configured(monkeypatch):
     monkeypatch.setattr(checker.store, "get_store", lambda: YamlStore())
     for name in ("LOCAL_MODEL_PATH", "LOCAL_MODEL_REPO", "LOCAL_MODEL_FILE"):
         monkeypatch.delenv(name, raising=False)
@@ -72,7 +73,8 @@ def test_check_page_offers_the_local_model_only_when_configured(monkeypatch):
     monkeypatch.setenv("LOCAL_MODEL_PATH", "model.gguf")
     monkeypatch.setenv("LOCAL_MODEL_LABEL", "Test model")
     at = AppTest.from_file("../views/check.py", default_timeout=30).run()
-    assert list(at.sidebar.selectbox[0].options) == [*options, "Test model"]
+    assert list(at.sidebar.selectbox[0].options) == ["Test model", *options]
+    assert at.sidebar.selectbox[0].value == local_model.MODEL_ID
 
 
 def test_manage_page_needs_the_password(memory_store):
@@ -120,6 +122,30 @@ def test_manage_page_replaces_old_rules_with_the_built_in_ones(memory_store):
     assert not at.exception
     assert len(memory_store.styles["daily_report"].rules) == 9
     assert memory_store.rows[0]["name"] == "Old"
+
+
+def test_manage_page_tests_rules_with_the_chosen_model(memory_store, monkeypatch):
+    models = []
+    monkeypatch.setattr(llm_checks, "default_client", lambda model: models.append(model))  # no client: skipped
+    monkeypatch.setenv("LOCAL_MODEL_PATH", "model.gguf")
+    memory_store.styles["daily_report"] = Style(id="daily_report", name="Daily", rules=[{"id": "clear", "check": "llm"}])
+    at = AppTest.from_file("../views/manage_rules.py", default_timeout=30).run()
+    at.text_input[0].input("secret")
+    at.text_input[1].input("Mike")
+    at.button[0].click().run()
+    at.selectbox(key="style_choice").set_value("daily_report").run()
+    next(t for t in at.toggle if t.label == "Include AI rules").set_value(True).run()
+    assert any("isn't sent to an AI service" in c.value for c in at.caption)
+    next(b for b in at.button if b.label == "Run test").click().run()
+    assert not at.exception
+    assert models == [local_model.MODEL_ID]
+
+    model_box = next(s for s in at.selectbox if s.label == "AI model")
+    groq_model = llm_checks.MODELS[0]
+    model_box.set_value(groq_model).run()
+    assert any("sent to Groq" in c.value for c in at.caption)
+    next(b for b in at.button if b.label == "Run test").click().run()
+    assert models == [local_model.MODEL_ID, groq_model]
 
 
 def test_manage_page_creates_a_new_style(memory_store):

@@ -6,3 +6,4 @@ __pycache__/
 
 # Slack data for fine-tuning: never commit
 data/
+docs/
