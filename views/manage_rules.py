@@ -10,7 +10,7 @@ import yaml
 from checker.llm_checks import MODELS
 from checker.loader import SUPPORTED_EXTENSIONS, read_document
 from checker.report import run_checks, summary, to_dataframe
-from checker.rule_import import draft_style
+from checker.rule_import import MAX_CHARS, draft_style
 from checker.store import StoreError, YamlStore, get_store
 from checker.styles import Style, slugify
 from checker.validation import CHECK_TYPES, validate_style
@@ -65,15 +65,26 @@ def lines_to_list(text: str, alternatives: bool = False) -> list:
     for line in text.splitlines():
         if not line.strip():
             continue
-        if alternatives and "/" in line:
-            items.append([part.strip() for part in line.split("/") if part.strip()])
+        if alternatives and " / " in line:  # "CI/CD" is one name
+            items.append([part.strip() for part in line.split(" / ") if part.strip()])
         else:
             items.append(line.strip())
     return items
 
 
-def list_to_lines(values: list) -> str:
-    return "\n".join(" / ".join(v) if isinstance(v, list) else str(v) for v in values)
+def list_to_lines(values) -> str:
+    values = values if isinstance(values, list) else [values] if values else []
+    return "\n".join(" / ".join(map(str, v)) if isinstance(v, list) else str(v) for v in values)
+
+
+def as_number(value, default: int, minimum: int = 0) -> int:
+    """
+    A value the number field accepts, even if the AI or the database gave something else.
+    """
+    try:
+        return max(int(value), minimum)
+    except (TypeError, ValueError, OverflowError):
+        return default
 
 
 def rule_fields(rule: dict, key: str) -> None:
@@ -81,24 +92,24 @@ def rule_fields(rule: dict, key: str) -> None:
     Form fields for one rule; edits the rule dict in place.
     """
     col1, col2 = st.columns([2, 1])
-    rule["title"] = col1.text_input("Title (shown in the report)", rule.get("title", ""), key=f"{key}_title")
-    rule["id"] = col2.text_input("Rule ID", rule.get("id", ""), key=f"{key}_id")
+    rule["title"] = col1.text_input("Title (shown in the report)", str(rule.get("title") or ""), key=f"{key}_title")
+    rule["id"] = col2.text_input("Rule ID", str(rule.get("id") or ""), key=f"{key}_id")
     check = rule.get("check")
 
     if check in ("required_sections", "working_hours"):
         text = st.text_area(
-            "Sections, one per line. Accept alternatives with /, e.g. Blockers / Issues",
-            list_to_lines(rule.get("sections", [])),
+            "Sections, one per line. Accept alternatives with / between spaces, e.g. Blockers / Issues",
+            list_to_lines(rule.get("sections")),
             key=f"{key}_sections",
         )
         rule["sections"] = lines_to_list(text, alternatives=True)
     elif check in ("forbidden_phrases", "must_contain"):
-        text = st.text_area("Words or phrases, one per line", list_to_lines(rule.get("phrases", [])), key=f"{key}_phrases")
+        text = st.text_area("Words or phrases, one per line", list_to_lines(rule.get("phrases")), key=f"{key}_phrases")
         rule["phrases"] = lines_to_list(text)
     elif check == "word_count":
         col1, col2 = st.columns(2)
-        minimum = col1.number_input("Minimum words (0 = none)", min_value=0, value=int(rule.get("min") or 0), key=f"{key}_min")
-        maximum = col2.number_input("Maximum words (0 = none)", min_value=0, value=int(rule.get("max") or 0), key=f"{key}_max")
+        minimum = col1.number_input("Minimum words (0 = none)", min_value=0, value=as_number(rule.get("min"), 0), key=f"{key}_min")
+        maximum = col2.number_input("Maximum words (0 = none)", min_value=0, value=as_number(rule.get("max"), 0), key=f"{key}_max")
         rule.pop("min", None)
         rule.pop("max", None)
         if minimum:
@@ -107,11 +118,13 @@ def rule_fields(rule: dict, key: str) -> None:
             rule["max"] = int(maximum)
     elif check == "long_sentences":
         rule["max_words"] = int(
-            st.number_input("Longest allowed sentence (words)", min_value=5, value=int(rule.get("max_words", 35)), key=f"{key}_max_words")
+            st.number_input(
+                "Longest allowed sentence (words)", min_value=5, value=as_number(rule.get("max_words"), 35, 5), key=f"{key}_max_words"
+            )
         )
     elif check == "pattern":
         rule["pattern"] = st.text_input(
-            "Regular expression", rule.get("pattern", ""), key=f"{key}_pattern", help=r"e.g. [A-Z]+-\d+ for ticket numbers like ABC-123"
+            "Regular expression", str(rule.get("pattern") or ""), key=f"{key}_pattern", help=r"e.g. [A-Z]+-\d+ for ticket numbers like ABC-123"
         )
         rule["must"] = st.radio(
             "The pattern...",
@@ -121,14 +134,14 @@ def rule_fields(rule: dict, key: str) -> None:
             horizontal=True,
             key=f"{key}_must",
         )
-        rule["label"] = st.text_input("What it means (used in the report), e.g. ticket number", rule.get("label", ""), key=f"{key}_label")
+        rule["label"] = st.text_input("What it means (used in the report), e.g. ticket number", str(rule.get("label") or ""), key=f"{key}_label")
     elif check == "llm":
         rule["question"] = st.text_area(
-            "Yes/no question for the AI ('yes' = the rule is followed)", rule.get("question", ""), key=f"{key}_question"
+            "Yes/no question for the AI ('yes' = the rule is followed)", str(rule.get("question") or ""), key=f"{key}_question"
         )
     elif check == "mention_at_top":
         rule["lines"] = int(
-            st.number_input("Lines that count as the top", min_value=1, value=int(rule.get("lines", 3)), key=f"{key}_lines")
+            st.number_input("Lines that count as the top", min_value=1, value=as_number(rule.get("lines"), 3, 1), key=f"{key}_lines")
         )
     elif check == "no_secrets":
         st.caption("No options: finds API keys, tokens and passwords.")
@@ -177,11 +190,14 @@ except StoreError as e:
 if not styles:
     st.info("The database has no styles yet.")
     if st.button("Load the example rules (Daily report, Issue/PR, Work plan)"):
-        for style in YamlStore().list_styles().values():
-            store.save_style(style, editor)
-        clear_styles_cache()
-        st.session_state.flash = "Example rules loaded."
-        st.rerun()
+        try:
+            store.save_styles(list(YamlStore().list_styles().values()), editor)
+        except StoreError as e:
+            st.error(str(e))
+        else:
+            clear_styles_cache()
+            st.session_state.flash = "Example rules loaded."
+            st.rerun()
 
 edit_tab, import_tab, history_tab = st.tabs(["Edit styles", "Import from rule document", "History"])
 
@@ -335,6 +351,8 @@ with import_tab:
                 st.session_state.pending_draft = make_draft(style)
                 problems = validate_style(style)
                 note = f" Fix these before saving: {' '.join(problems)}" if problems else ""
+                if len(text) > MAX_CHARS:
+                    note += f" Only the first {MAX_CHARS} characters of the rule document were used."
                 st.session_state.flash = (
                     f"Draft '{style.name}' with {len(style.rules)} rules is ready in the Edit styles tab. "
                     f"Review it, test it, then save.{note}"

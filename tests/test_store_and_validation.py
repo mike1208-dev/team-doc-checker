@@ -86,6 +86,20 @@ def test_errors_become_store_errors():
         store.list_styles()
 
 
+@pytest.mark.parametrize("response", [{"text": "<html>"}, {"json": {"message": "x"}}, {"json": [{"name": "no id"}]}, {}])
+def test_unreadable_answers_become_store_errors(response):
+    store, _ = make_store(lambda r: httpx.Response(200, **response))
+    with pytest.raises(StoreError):
+        store.list_styles()
+
+
+def test_save_styles_is_one_request():
+    store, requests = make_store(lambda r: httpx.Response(201))
+    store.save_styles(list(load_styles().values()), editor="Dan")
+    [request] = requests
+    assert [row["id"] for row in json.loads(request.content)] == ["daily_report", "issue_pr", "work_plan"]
+
+
 def test_get_store_falls_back_to_yaml_without_settings(monkeypatch):
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_KEY", raising=False)
@@ -93,6 +107,7 @@ def test_get_store_falls_back_to_yaml_without_settings(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_KEY", "sb_secret_test")
     assert isinstance(get_store(), SupabaseStore)
+    assert get_store() is get_store()
 
 
 # --- Validation -------------------------------------------------------------------------------
@@ -118,6 +133,24 @@ def test_validation_finds_problems():
     text = " ".join(validate_style(style))
     for expected in ["Style ID", "name is required", "'question' is required", "used twice", "not a valid regular expression", "unknown check type", "minimum is larger"]:
         assert expected in text
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"check": "word_count", "min": "50", "max": 100},
+        {"check": "long_sentences", "max_words": None},
+        {"check": "mention_at_top", "lines": 0},
+        {"check": "required_sections", "sections": "Today"},
+        {"check": "required_sections", "sections": [[]]},
+        {"check": "must_contain", "phrases": [["a"]]},
+        {"check": "pattern", "pattern": ["a"]},
+        {"check": "llm", "question": 3},
+        {"check": "no_secrets", "title": 5},
+    ],
+)
+def test_validation_finds_wrong_types(rule):
+    assert validate_style(Style(id="s", name="S", rules=[{"id": "a", **rule}]))
 
 
 # --- New check types and safe running ---------------------------------------------------------
@@ -149,22 +182,32 @@ def test_broken_rule_is_skipped_not_crashed():
 # --- AI import --------------------------------------------------------------------------------
 
 
-def test_draft_style_from_rule_document():
-    answer = {
-        "name": "Meeting notes",
-        "description": "Decisions and action items.",
-        "detect": ["meeting notes"],
-        "rules": [{"id": "has_sections", "title": "Has sections", "check": "required_sections", "sections": ["Attendees"]}],
-    }
-    calls = []
-
+def fake_client(answer, calls):
     def create(**kwargs):
         calls.append(kwargs)
         message = SimpleNamespace(content=json.dumps(answer))
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
-    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    style = draft_style("Meeting notes must list attendees.", model="m", client=client)
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+@pytest.mark.parametrize("answer", [["a"], {"name": "N", "rules": "a"}, {"name": "N", "rules": ["a"]}, {"name": "N", "rules": [{"check": ["llm"]}]}])
+def test_draft_style_rejects_a_wrong_answer(answer):
+    with pytest.raises(ValueError, match="isn't a list of rules"):
+        draft_style("text", model="m", client=fake_client(answer, []))
+
+
+def test_draft_style_from_rule_document():
+    answer = {
+        "name": "Meeting notes",
+        "description": "Decisions and action items.",
+        "detect": "meeting notes, attendees",
+        "rules": [{"id": "has_sections", "title": "Has sections", "check": "required_sections", "sections": ["Attendees"]}],
+    }
+    calls = []
+    style = draft_style("Meeting notes must list attendees.", model="m", client=fake_client(answer, calls))
     assert style.id == "meeting_notes"
+    assert style.detect == ["meeting notes", "attendees"]
+    assert calls[0]["max_completion_tokens"] == 1000
     assert validate_style(style) == []
     assert calls[0]["response_format"] == {"type": "json_object"}

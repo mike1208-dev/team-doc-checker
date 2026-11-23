@@ -156,7 +156,7 @@ rules:
 | `check` | Options | Result |
 |---|---|---|
 | `required_sections` | `sections`: names (or lists of alternative names) | ❌ if any is missing |
-| `no_secrets` | none | ❌ for API keys/tokens, ⚠️ for `password: ...` lines |
+| `no_secrets` | none | ❌ for API keys/tokens, ⚠️ for `password: ...` lines. If any is found, the text isn't sent to Groq |
 | `word_count` | `min`, `max` | ❌ if too short or too long |
 | `long_sentences` | `max_words` (default 35) | ⚠️ for sentences that are too long |
 | `forbidden_phrases` | `phrases`: e.g. `["TODO", "TBD"]` | ❌ if any appears |

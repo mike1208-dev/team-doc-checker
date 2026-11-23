@@ -1,25 +1,29 @@
 import streamlit as st
 
-from checker import local_model
+from checker import local_model, store
 from checker.llm_checks import MODELS
-from checker.store import StoreError, YamlStore, get_store
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _load_styles():
-    return get_store().list_styles()
-
-
-def load_styles_or_fallback():
-    """
-    Styles from the store (cached for a minute). Falls back to the YAML example rules, with a
-    warning, if the database can't be reached, so checking documents never breaks.
-    """
+    # An error is returned, not raised, so it's cached too and the app doesn't wait for the database on every click
     try:
-        return _load_styles()
-    except StoreError as e:
-        st.warning(f"Couldn't load rules from the database, so the built-in example rules are used. ({e})")
-        return YamlStore().list_styles()
+        return store.get_store().list_styles(), ""
+    except store.StoreError as e:
+        return {}, str(e)
+
+
+def load_style(style_id: str):
+    """
+    A style from the store (cached for a minute). Falls back to the built-in rules, with a warning, if the
+    database can't be reached or doesn't have the style, so checking documents never breaks.
+    """
+    styles, error = _load_styles()
+    if style_id in styles:
+        return styles[style_id]
+    reason = f"Couldn't load rules from the database ({error})" if error else "The database has no rules for this document"
+    st.warning(f"{reason}, so the built-in rules are used.")
+    return store.YamlStore().list_styles()[style_id]
 
 
 def ai_models():

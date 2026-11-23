@@ -6,7 +6,7 @@ import streamlit as st
 from checker.loader import SUPPORTED_EXTENSIONS, read_document
 from checker.report import count, run_checks, summary, to_dataframe, to_markdown
 from checker.result import FAIL, ICONS, PASS, SKIP, WARN
-from views.shared import ai_models, load_styles_or_fallback, model_label, privacy_note
+from views.shared import ai_models, load_style, model_label, privacy_note
 
 STYLE_ID = "daily_report"  # the only document style in v1
 JAPANESE = re.compile(r"[぀-ヿ一-鿿]")
@@ -41,10 +41,7 @@ def show_result(result):
 st.title("📝 ZeeChecker")
 st.caption("Check a daily report against the team's rules before you share it.")
 
-style = load_styles_or_fallback().get(STYLE_ID)
-if style is None:
-    st.info(f"There are no daily report rules yet. An editor can add a style with the ID `{STYLE_ID}` on the **Manage rules** page.")
-    st.stop()
+style = load_style(STYLE_ID)
 
 with st.sidebar:
     st.header("Settings")
