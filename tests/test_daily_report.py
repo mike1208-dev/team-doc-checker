@@ -145,4 +145,4 @@ def test_local_model_is_off_until_configured(monkeypatch):
     assert not local_model.is_configured()
     monkeypatch.setenv("LOCAL_MODEL_FILE", "model.gguf")
     assert local_model.is_configured()
-    assert local_model.MODEL_ID not in llm_checks.MODELS  # Groq stays the default
+    assert local_model.MODEL_ID not in llm_checks.MODELS  # the pages add it when it's set up

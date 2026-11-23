@@ -14,7 +14,7 @@ from checker.rule_import import draft_style
 from checker.store import StoreError, YamlStore, get_store
 from checker.styles import Style, slugify
 from checker.validation import CHECK_TYPES, validate_style
-from views.shared import clear_styles_cache
+from views.shared import ai_models, clear_styles_cache, model_label, privacy_note
 
 NEW = "➕ New style"
 
@@ -245,8 +245,13 @@ with edit_tab:
     with st.expander("🧪 Test these rules on a sample document (before saving)"):
         sample = st.text_area("Sample document", key=f"{v}_sample")
         include_ai = st.toggle("Include AI rules", value=False, key=f"{v}_sample_ai")
+        test_model = st.selectbox(
+            "AI model", ai_models(), format_func=model_label, disabled=not include_ai, key=f"{v}_sample_model"
+        )
+        if include_ai:
+            st.caption(privacy_note(test_model, "sample"))
         if st.button("Run test", key=f"{v}_run_test"):
-            results = run_checks(sample, draft_to_style(draft), use_llm=include_ai)
+            results = run_checks(sample, draft_to_style(draft), use_llm=include_ai, model=test_model)
             st.markdown(f"**{summary(results)}**")
             st.dataframe(to_dataframe(results), hide_index=True, width="stretch")
 

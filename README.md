@@ -86,7 +86,7 @@ Open http://localhost:8501, paste or upload a daily report and click **Check dai
 
 If the database still has the old example rules: **Manage rules** → Daily report → **Use the built-in rules**.
 
-Without a Groq key, the code rules still work: AI rules show ⏭️ skipped, or turn off
+Without a Groq key or a local model, the code rules still work: AI rules show ⏭️ skipped, or turn off
 **Use AI checks** in the sidebar.
 
 ## Deployment
@@ -170,11 +170,12 @@ Use plain checks wherever possible; use `llm` only for rules that need understan
 
 ## Choosing a model
 
-Pick the model from the dropdown in the app's sidebar. The list and the default come from `.env` /
-Secrets, so no code change is needed when Groq retires or adds models:
+Pick the model from the dropdown in the app's sidebar, or in the rule test on **Manage rules**. The local
+model is the default when it's set up (see below). The Groq models come from `.env` / Secrets, so no code
+change is needed when Groq retires or adds models:
 
 ```toml
-GROQ_MODEL = "qwen/qwen3.8-27b"                                              # default
+GROQ_MODEL = "qwen/qwen3.8-27b"                                              # default Groq model
 GROQ_MODELS = "qwen/qwen3.8-27b,openai/gpt-oss-20b,openai/gpt-oss-120b"      # dropdown list
 ```
 
@@ -182,8 +183,8 @@ Available models: https://console.groq.com/docs/models
 
 ## Local model
 
-A small model can run inside the app (CPU, `llama-cpp-python`). It shows up in the model list when it's set
-in `.env` / Secrets. If it can't run, its checks are skipped; they are never sent to Groq instead.
+A small model can run inside the app (CPU, `llama-cpp-python`). When it's set in `.env` / Secrets, it is
+first in the model list and used by default. If it can't run, its checks are skipped; they are never sent to Groq instead.
 
 ```toml
 LOCAL_MODEL_REPO = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"    # Hugging Face repository
