@@ -100,6 +100,24 @@ def test_local_model_answers_ai_rules(monkeypatch):
     assert llama.calls[0]["response_format"]["schema"] == local_model.ANSWER_SCHEMA
 
 
+def test_the_prompts_of_all_rules_start_with_the_document(monkeypatch):
+    llama = FakeLlama()
+    monkeypatch.setattr(local_model, "_client", local_model.LocalClient(llama))
+    rules = [{"id": i, "check": "llm", "question": question} for i, question in enumerate(("Is it clear?", "Any blockers?"))]
+    run_checks("Worked on it", Style(id="t", name="Test", rules=rules), model=local_model.MODEL_ID)
+    first, second = (call["messages"][0]["content"] for call in llama.calls)
+    start = first[: first.index("Is it clear?")]
+    assert "Worked on it" in start and second.startswith(start)
+
+
+def test_threads_can_be_set(monkeypatch):
+    monkeypatch.delenv("LOCAL_MODEL_THREADS", raising=False)
+    monkeypatch.setattr(local_model.os, "cpu_count", lambda: 32)
+    assert local_model.threads() == 4
+    monkeypatch.setenv("LOCAL_MODEL_THREADS", "2")
+    assert local_model.threads() == 2
+
+
 def test_local_model_is_loaded_once(monkeypatch):
     loads = []
     monkeypatch.setattr(local_model, "_client", None)

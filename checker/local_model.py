@@ -7,6 +7,7 @@ it's private) or LOCAL_MODEL_PATH (a file on this computer).
 
 import os
 import threading
+import time
 from types import SimpleNamespace
 
 MODEL_ID = "local"
@@ -35,6 +36,13 @@ def label() -> str:
     return os.getenv("LOCAL_MODEL_LABEL") or "Local model (runs in the app)"
 
 
+def threads() -> int:
+    """
+    Shared hosting reports more processors than the app may use, and too many threads slow llama.cpp down.
+    """
+    return int(os.getenv("LOCAL_MODEL_THREADS") or min(4, os.cpu_count() or 1))
+
+
 class LocalClient:
     """
     Same call as groq.Groq (client.chat.completions.create), answered by a llama.cpp model.
@@ -47,12 +55,14 @@ class LocalClient:
 
     def _create(self, messages: list[dict], temperature: float = 0, **_):
         with self._lock:
+            started = time.perf_counter()
             response = self._llm.create_chat_completion(
                 messages=messages,
                 temperature=temperature,
                 max_tokens=MAX_ANSWER_TOKENS,
                 response_format={"type": "json_object", "schema": ANSWER_SCHEMA},
             )
+            print(f"Local model: answered in {time.perf_counter() - started:.1f} s, tokens: {response.get('usage')}", flush=True)
         message = SimpleNamespace(content=response["choices"][0]["message"]["content"])
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
@@ -60,6 +70,7 @@ class LocalClient:
 def _load() -> LocalClient:
     from llama_cpp import Llama
 
+    started = time.perf_counter()
     path = os.getenv("LOCAL_MODEL_PATH")
     if not path:
         from huggingface_hub import hf_hub_download
@@ -69,7 +80,10 @@ def _load() -> LocalClient:
             filename=os.environ["LOCAL_MODEL_FILE"],
             token=os.getenv("HF_TOKEN") or None,
         )
-    return LocalClient(Llama(model_path=path, n_ctx=CONTEXT_TOKENS, n_threads=os.cpu_count(), verbose=False))
+    count = threads()
+    llm = Llama(model_path=path, n_ctx=CONTEXT_TOKENS, n_threads=count, n_threads_batch=count, verbose=False)
+    print(f"Local model: ready in {time.perf_counter() - started:.1f} s, {count} threads of {os.cpu_count()}", flush=True)
+    return LocalClient(llm)
 
 
 def get_client() -> LocalClient:

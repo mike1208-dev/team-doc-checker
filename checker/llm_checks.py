@@ -19,15 +19,18 @@ MODELS = list(
     )
 )
 MAX_CHARS = 8000  # models lose track of very long input
+MAX_ANSWER_TOKENS = 300  # without a cap, Groq reserves more than some models' limit per minute
 
+# The document comes before the rule, so the local model reads it once and reuses it for the next rules.
+# The local model is trained on this exact prompt: after a change, rebuild the dataset and train again.
 PROMPT = """You are reviewing a team document against ONE rule.
-
-Rule: {question}
 
 Document:
 \"\"\"
 {text}
 \"\"\"
+
+Rule: {question}
 
 Answer only with JSON in exactly this format:
 {{"verdict": "pass" | "fail" | "unsure", "reason": "one short sentence", "quote": "the exact text that breaks the rule, or an empty string"}}"""
@@ -43,6 +46,13 @@ def default_client(model: str = DEFAULT_MODEL):
     return Groq()  # reads GROQ_API_KEY
 
 
+def token_cap(model: str) -> dict:
+    """
+    gpt-oss models think before they answer, which a small cap would cut off.
+    """
+    return {} if model.startswith("openai/gpt-oss") else {"max_completion_tokens": MAX_ANSWER_TOKENS}
+
+
 def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) -> CheckResult:
     """
     rule.question: the rule written as a yes/no question for the model.
@@ -56,6 +66,7 @@ def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) ->
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             response_format={"type": "json_object"},
+            **token_cap(model),
         )
         answer = json.loads(response.choices[0].message.content)
     except json.JSONDecodeError:
