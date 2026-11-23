@@ -11,8 +11,9 @@ problem is and how to fix it.
 - **AI:** [Groq](https://console.groq.com) cloud API (free tier, nothing to download). Documents are
   sent to Groq for the AI checks.
 
-> **Status:** the rule files in `rules/` are **examples**. They will be replaced with the team's real
-> rules.
+- **Rules:** stored in a Supabase database and edited on the **Manage rules** page (forms, AI import
+  from a rule document, history with restore). Without a database, the example rules in `rules/*.yaml`
+  are used (read-only).
 
 ## How it works
 
@@ -21,12 +22,20 @@ document ──► read as text ──► pick style (chosen or auto-detected) �
                                                                          ├─ plain Python checks (fast, exact)
                                                                          └─ AI checks via Groq (meaning)
                                                                      ──► report
+
+rules: Supabase database (editable in the app)  ──fallback──►  rules/*.yaml (read-only examples)
 ```
 
 | Path | Purpose |
 |---|---|
-| `app.py` | Streamlit web page |
-| `rules/*.yaml` | One file per document style: its rules |
+| `app.py` | Entry point: page navigation |
+| `views/check.py` | **Check document** page |
+| `views/manage_rules.py` | **Manage rules** page (editors only) |
+| `rules/*.yaml` | Example styles: fallback when there's no database, and the starting rules for a new one |
+| `supabase/migrations/` | Database tables and the history trigger |
+| `checker/store.py` | Reads and saves styles: Supabase, or the YAML files |
+| `checker/validation.py` | Checks a style is valid before it's saved |
+| `checker/rule_import.py` | Drafts rules from a rule document with the AI |
 | `checker/loader.py` | Reads md / txt / pdf / docx into text |
 | `checker/styles.py` | Loads the rule files; guesses the style |
 | `checker/basic_checks.py` | Rule checks in plain Python |
@@ -74,13 +83,40 @@ The app runs on [Streamlit Community Cloud](https://share.streamlit.io) at https
 - **Secrets** (App settings → Secrets), the cloud version of `.env`:
   ```toml
   GROQ_API_KEY = "gsk_..."
+  SUPABASE_URL = "https://<project-ref>.supabase.co"
+  SUPABASE_KEY = "sb_secret_..."
+  EDITOR_PASSWORD = "..."
   ```
 - Every push to the deployed branch redeploys the app automatically.
 - Invite teammates in App settings → Sharing.
 
-## Adding a new document style
+## Rule database (Supabase)
 
-Add one file to `rules/`, e.g. `rules/meeting_notes.yaml`. No code changes; restart the app.
+1. Create a project at https://supabase.com.
+2. Open **SQL Editor**, paste the contents of `supabase/migrations/20261120000000_rule_store.sql` and
+   click **Run**. It creates the `styles` and `style_history` tables. It's safe to run again.
+3. Add to `.env` (local) or Streamlit **Secrets** (deployed):
+   ```toml
+   SUPABASE_URL = "https://<project-ref>.supabase.co"    # Project Settings -> Data API
+   SUPABASE_KEY = "sb_secret_..."                        # Project Settings -> API Keys -> Secret keys
+   EDITOR_PASSWORD = "choose-a-password"
+   ```
+   The secret key only lives on the server; the tables have row level security with no policies, so
+   nobody can reach them with the public key.
+4. Open **Manage rules**, unlock with the editor password, and click **Load the example rules** (or
+   create styles from scratch).
+
+## Managing rules
+
+On the **Manage rules** page (editor password required):
+
+- **Edit styles:** create, edit or delete styles and their rules with forms; test the rules on a sample
+  document before saving. Changes apply to checks right away; no redeploy.
+- **Import from rule document:** upload or paste a written rule document; the AI drafts a style for you
+  to review, test and save.
+- **History:** every save or delete keeps the previous version; restore any of them.
+
+Without a database, styles come from `rules/*.yaml`. A style file looks like this:
 
 ```yaml
 name: Meeting notes
@@ -110,6 +146,8 @@ rules:
 | `word_count` | `min`, `max` | ❌ if too short or too long |
 | `long_sentences` | `max_words` (default 35) | ⚠️ for sentences that are too long |
 | `forbidden_phrases` | `phrases`: e.g. `["TODO", "TBD"]` | ❌ if any appears |
+| `must_contain` | `phrases`: text that must appear | ❌ if any is missing |
+| `pattern` | `pattern` (regular expression), `must`: `match` / `not_match`, `label` | ❌ if missing (or found, with `not_match`) |
 | `llm` | `question`: the rule as a yes/no question | ✅ / ❌ / ⚠️ from the AI |
 
 Use plain checks wherever possible; use `llm` only for rules that need understanding.
@@ -134,7 +172,7 @@ python -m pytest -v
 
 ## Roadmap
 
-1. Replace the example rules with the team's real rules
+1. Import the team's real rule documents on the Manage rules page
 2. Collect 10–20 real documents in `eval/docs/` and label which rules each one breaks
 3. `eval/evaluate.py`: measure the tool against the labels
    (target: **≥ 80% of rule breaks found, < 2 false alarms per document**)

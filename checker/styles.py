@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,7 +10,7 @@ RULES_DIR = Path(__file__).resolve().parent.parent / "rules"
 @dataclass
 class Style:
     """
-    One document style (daily report, issue/PR, work plan, ...), loaded from rules/<id>.yaml.
+    One document style (daily report, issue/PR, work plan, ...) and its rules.
     """
 
     id: str
@@ -17,6 +18,30 @@ class Style:
     rules: list[dict]
     description: str = ""
     detect: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "detect": self.detect,
+            "rules": self.rules,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Style":
+        return cls(
+            id=data["id"],
+            name=data.get("name") or data["id"],
+            description=data.get("description") or "",
+            detect=data.get("detect") or [],
+            rules=data.get("rules") or [],
+        )
+
+
+def slugify(text: str) -> str:
+    # "Meeting notes!" -> "meeting_notes"
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:50]
 
 
 def load_styles(rules_dir: Path = RULES_DIR) -> dict[str, Style]:
@@ -26,13 +51,7 @@ def load_styles(rules_dir: Path = RULES_DIR) -> dict[str, Style]:
     styles = {}
     for path in sorted(Path(rules_dir).glob("*.yaml")):
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        styles[path.stem] = Style(
-            id=path.stem,
-            name=data.get("name", path.stem),
-            description=data.get("description", ""),
-            detect=data.get("detect", []),
-            rules=data.get("rules", []),
-        )
+        styles[path.stem] = Style.from_dict({**data, "id": path.stem})
     return styles
 
 

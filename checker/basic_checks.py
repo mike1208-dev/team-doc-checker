@@ -128,10 +128,42 @@ def forbidden_phrases(text: str, rule: dict) -> CheckResult:
     return CheckResult.from_rule(rule, FAIL, where=where, message=f"Found: {', '.join(found)}. Replace with real content.")
 
 
+def must_contain(text: str, rule: dict) -> CheckResult:
+    """
+    rule.phrases: text that must appear (case-insensitive), e.g. a ticket link or a sign-off.
+    """
+    lowered = text.lower()
+    missing = [phrase for phrase in rule.get("phrases", []) if phrase.lower() not in lowered]
+    if missing:
+        return CheckResult.from_rule(rule, FAIL, message=f"Missing: {', '.join(missing)}. Add it.")
+    return CheckResult.from_rule(rule, PASS)
+
+
+def pattern(text: str, rule: dict) -> CheckResult:
+    """
+    rule.pattern: a regular expression, e.g. [A-Z]+-\\d+ for ticket numbers like ABC-123.
+    rule.must: "match" (default, it must appear somewhere) or "not_match" (it must not appear).
+    rule.label: what the pattern means, used in the message.
+    """
+    regex = re.compile(rule.get("pattern", ""), re.MULTILINE)
+    label = rule.get("label") or f"text matching {rule.get('pattern')}"
+    if rule.get("must", "match") == "not_match":
+        lines = [number for number, line in enumerate(text.splitlines(), start=1) if regex.search(line)]
+        if lines:
+            where = ", ".join(f"line {n}" for n in lines[:5])
+            return CheckResult.from_rule(rule, FAIL, where=where, message=f"Found {label}. Remove it.")
+        return CheckResult.from_rule(rule, PASS)
+    if regex.search(text):
+        return CheckResult.from_rule(rule, PASS)
+    return CheckResult.from_rule(rule, FAIL, message=f"No {label} found. Add one.")
+
+
 CHECKS = {
     "required_sections": required_sections,
     "no_secrets": no_secrets,
     "word_count": word_count,
     "long_sentences": long_sentences,
     "forbidden_phrases": forbidden_phrases,
+    "must_contain": must_contain,
+    "pattern": pattern,
 }

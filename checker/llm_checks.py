@@ -34,7 +34,7 @@ Answer only with JSON in exactly this format:
 VERDICTS = {"pass": PASS, "fail": FAIL}
 
 
-def _default_client():
+def default_client():
     from groq import Groq
 
     return Groq()  # reads GROQ_API_KEY
@@ -47,7 +47,7 @@ def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) ->
     truncated = len(text) > MAX_CHARS
     prompt = PROMPT.format(question=rule.get("question", rule.get("title", "")), text=text[:MAX_CHARS])
     try:
-        client = client or _default_client()
+        client = client or default_client()
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],

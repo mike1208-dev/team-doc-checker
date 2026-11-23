@@ -24,7 +24,10 @@ def run_checks(
             else:
                 results.append(CheckResult.from_rule(rule, SKIP, message="AI checks are turned off."))
         elif check in basic_checks.CHECKS:
-            results.append(basic_checks.CHECKS[check](text, rule))
+            try:
+                results.append(basic_checks.CHECKS[check](text, rule))
+            except Exception as e:  # a badly edited rule must not break the whole report
+                results.append(CheckResult.from_rule(rule, SKIP, message=f"This rule has an error: {e}"))
         else:
             results.append(CheckResult.from_rule(rule, SKIP, message=f"Unknown check type '{check}' in the rules file."))
     return results
