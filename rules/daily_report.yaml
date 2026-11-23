@@ -1,35 +1,56 @@
-# EXAMPLE rules — replace with the team's real rules when they are shared.
+# ZeeChecker v1 rules for daily reports
 name: Daily report
-description: What I did today, what I'll do next, and what is blocking me.
+description: What I did yesterday, what I'll do today, and what is blocking me.
 
 # Words that suggest a document is this style (used by "Auto-detect")
-detect: ["daily report", "today", "tomorrow", "blockers"]
+detect: ["daily report", "yesterday", "weekend", "today", "blockers"]
 
 rules:
   - id: has_sections
-    title: Has Done / Next / Blockers sections
+    title: Has Yesterday / Today / Blockers sections
     check: required_sections
     sections:
-      - ["Done", "Completed", "Today"]
-      - ["Next", "Plan", "Tomorrow"]
-      - ["Blockers", "Issues", "Problems"]
+      - ["Yesterday", "Weekend"]
+      - ["Today"]
+      - ["Blockers", "Notes"]
 
-  - id: no_secrets
-    title: No secrets (keys, passwords)
-    check: no_secrets
+  - id: tags_reviewer
+    title: Tags the reviewer at the top
+    check: mention_at_top
 
-  - id: length
-    title: Short enough to read quickly
-    check: word_count
-    min: 30
-    max: 400
+  - id: has_hours
+    title: Gives working hours for Yesterday and Today
+    check: working_hours
+    sections:
+      - ["Yesterday", "Weekend"]
+      - ["Today"]
 
-  - id: short_sentences
-    title: Plain English (no very long sentences)
-    check: long_sentences
-    max_words: 35
-
-  - id: specific
-    title: Tasks are specific
+  - id: concrete_tasks
+    title: Each task says what was done or will be done
     check: llm
-    question: "Does each completed task say concretely what was done (not vague, like 'worked on stuff')?"
+    question: "Does each task say concretely what was done or will be done (not vague, like 'Worked on the login page')?"
+
+  - id: status_or_result
+    title: Each finished task has a status or result
+    check: llm
+    question: "Does each finished task (under Yesterday or Weekend) have a status or result, such as Merged, In review, a PR link or a number?"
+
+  - id: overall_progress
+    title: Says the overall progress
+    check: llm
+    question: "Does the report say how far the overall work is, or what is left to do?"
+
+  - id: clear_and_short
+    title: Clear and short
+    check: llm
+    question: "Is the report easy to read, with no repeated lines and no needless detail?"
+
+  - id: terms_explained
+    title: Unclear terms are explained
+    check: llm
+    question: "Are abbreviations and unclear terms explained?"
+
+  - id: real_blockers
+    title: Blockers are stated clearly
+    check: llm
+    question: "Are blockers stated clearly, with 'None' used only when the report mentions no problem that blocks the work?"

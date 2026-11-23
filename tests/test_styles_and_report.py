@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from checker import local_model
 from checker.basic_checks import CHECKS
 from checker.loader import read_document
 from checker.report import run_checks, summary, to_markdown
@@ -10,9 +11,9 @@ from checker.result import FAIL, PASS, SKIP, WARN
 from checker.styles import Style, guess_style, load_styles
 
 DAILY_REPORT = """# Daily report
-## Done
+## Yesterday
 - Fixed the login bug on the settings page.
-## Next
+## Today
 - Write tests for the login flow.
 ## Blockers
 - None.
@@ -61,8 +62,8 @@ def test_run_checks_without_ai(styles):
     results = run_checks(DAILY_REPORT, styles["daily_report"], use_llm=False)
     by_id = {r.rule_id: r for r in results}
     assert by_id["has_sections"].status == PASS
-    assert by_id["specific"].status == SKIP
-    assert summary(results).endswith("(1 skipped)")
+    assert by_id["concrete_tasks"].status == SKIP
+    assert summary(results).endswith("(6 skipped)")
 
 
 @pytest.mark.parametrize(
@@ -72,6 +73,9 @@ def test_run_checks_without_ai(styles):
         (FakeClient(json.dumps({"verdict": "fail", "reason": "vague", "quote": "worked on stuff"})), FAIL),
         (FakeClient(json.dumps({"verdict": "unsure", "reason": "?", "quote": ""})), WARN),
         (FakeClient("not json"), WARN),
+        (FakeClient("[]"), WARN),
+        (FakeClient("null"), WARN),
+        (FakeClient(None), WARN),
         (FakeClient(error=ConnectionError("Groq is unreachable")), SKIP),
     ],
 )
@@ -79,6 +83,17 @@ def test_llm_rule_results(client, expected):
     style = Style(id="t", name="Test", rules=[{"id": "clear", "check": "llm", "question": "Is it clear?"}])
     [result] = run_checks("Some text.", style, client=client)
     assert result.status == expected
+
+
+def test_a_document_with_a_secret_is_not_sent_to_the_ai_service(styles):
+    client = FakeClient(json.dumps({"verdict": "pass", "reason": "", "quote": ""}))
+    text = "## Summary\npassword: hunter22"
+    results = {r.rule_id: r for r in run_checks(text, styles["issue_pr"], client=client)}
+    assert results["no_secrets"].status == WARN and results["explains_why"].status == SKIP
+    assert not client.calls
+
+    run_checks(text, styles["issue_pr"], model=local_model.MODEL_ID, client=client)  # stays in the app
+    assert len(client.calls) == 1
 
 
 def test_unknown_check_is_skipped_not_crashed():

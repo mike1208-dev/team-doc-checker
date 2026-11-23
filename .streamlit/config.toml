@@ -1,0 +1,3 @@
+[client]
+# Hide developer options (rerun, settings, deploy, ...) from the top-right menu
+toolbarMode = "minimal"
