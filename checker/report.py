@@ -1,6 +1,6 @@
 import pandas as pd
 
-from checker import basic_checks, llm_checks
+from checker import basic_checks, llm_checks, local_model
 from checker.result import ICONS, PASS, SKIP, CheckResult
 from checker.styles import Style
 
@@ -16,10 +16,14 @@ def run_checks(
     Runs every rule of the style on the text, in the order they appear in the YAML file.
     """
     results = []
+    secret_found = any(rule.get("check") == "no_secrets" for rule in style.rules) and basic_checks.no_secrets(text, {}).status != PASS
     for rule in style.rules:
         check = rule.get("check")
         if check == "llm":
-            if use_llm:
+            if use_llm and secret_found and model != local_model.MODEL_ID:
+                message = "Not sent to the AI service, because the text may contain a secret. Remove it and check again."
+                results.append(CheckResult.from_rule(rule, SKIP, message=message))
+            elif use_llm:
                 results.append(llm_checks.llm_check(text, rule, model=model, client=client))
             else:
                 results.append(CheckResult.from_rule(rule, SKIP, message="AI checks are turned off."))

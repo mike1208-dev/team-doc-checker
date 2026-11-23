@@ -23,31 +23,92 @@ SECRET_PATTERNS = [
 ]
 
 
-# Slack shortcodes (:dart:) and emoji characters
-EMOJI = r"(?::[a-z][a-z0-9_+-]*:|[\u2600-\u27BF\U0001F300-\U0001FAFF]\uFE0F?)"
-BULLET = r"[-*+•◦▪]\uFE0E?\s+"
-DURATION = r"\d+(?:\.\d+)?\s*-?\s*(?:hours?|hrs?|h|minutes?|mins?)\b"
-# In a task line a duration only counts as working time in brackets, in backticks or after a dash at the end,
-# so that "cut the build time from 2 hours to 5 minutes" doesn't
-TASK_DURATION = rf"[(\[`]\s*{DURATION}[^)\]`]*[)\]`]|[-–—:]\s*{DURATION}[*_.\s]*$"
-SECTION_END = ["Blockers", "Notes"]  # the sections after the ones with hours
+# Slack shortcodes (:dart:, :+1:), keycaps and emoji characters, with their joiners and skin tones
+EMOJI = (
+    r"(?:(?<!\d):[a-z0-9+-][a-z0-9_+-]*:|[0-9#*]\uFE0F?\u20E3"
+    r"|[\u2300-\u23FF\u2600-\u27BF\u2B00-\u2BFF\U0001F000-\U0001FAFF][\uFE0E\uFE0F\u200D\U0001F3FB-\U0001F3FF]*)"
+)
+BULLET = r"[-*+•◦▪][\uFE0E\uFE0F]?\s+"
+NUMBER = r"\d+(?:[.,]\d+)?"
+DURATION = rf"{NUMBER}\s*-?\s*(?:(?:hours?|hrs?|h)(?:\s*(?:and\s+)?\d+\s*(?:minutes?|mins?|m)?)?|minutes?|mins?)\b"
+HOURS = (  # a duration with nothing but working time around it: "~2 hours", "2-3 hours planned"
+    rf"(?:(?:time|est\.?|estimated?|took|spent|planned|total|about|around|approx\.?|approximately|~|≈)[:\s]*){{0,3}}"
+    rf"(?:{NUMBER}\s*[-–~]\s*)?{DURATION}"
+    r"(?:\s+(?:in total|total|spent|planned|worked|so far|left|remaining|each|today|yesterday)\b)?"
+)
+MONTH = (
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?"
+    r"|nov(?:ember)?|dec(?:ember)?)\.?"
+)
+DATE = (
+    r"(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}(?:[-/.]\d{2,4})?"
+    rf"|{MONTH}\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s+\d{{4}})?|\d{{1,2}}(?:st|nd|rd|th)?\s+{MONTH}(?:,?\s+\d{{4}})?"
+    r"|(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?:day)?)\b"
+)
+BRACKETS = r"(?:\([^()]*\)|\[[^\[\]]*\])"
+# What may follow a section name in a heading: brackets, hours or a date, then ": ..." or " - ...". The repeats
+# are limited, or a long line of hours takes forever to match
+HEADING_REST = (
+    rf"(?:['’]s?)?(?P<suffix>(?:\s*[,–—-]?\s*(?:{BRACKETS}|(?<![a-z0-9]){HOURS}|(?<![a-z0-9]){DATE})){{0,4}})"
+    r"\s*(?P<tail>:.*|\s-+\s.*|[–—].*)?"
+)
+# Sections that end the ones with hours
+SECTION_END = ["Blockers", "Notes", "Issues", "Problems", "Risks", "Questions", "Tomorrow", "Next steps", "Next week", "Overall progress"]
 
 
 def _normalize_heading(line: str) -> str:
-    # "## 1. Done:", "**Done**", "Done:" -> "done"; Slack: "• :dart: *Today (7 hours)*" -> "today"
+    # "## 1. Done:", "**Done**", "Done:" -> "done"; Slack: "• :dart: *Today (7 hours)*" -> "today (7 hours)"
+    original = line.strip().lower()
     line = re.sub(rf"^{BULLET}(?=[*_ ]*{EMOJI})", "", line.strip())  # a bullet is only a heading if an emoji follows
     line = re.sub(EMOJI, " ", line).strip()
     line = re.sub(r"^#+\s*", "", line)
     line = re.sub(r"^\d+[.)]\s*", "", line)
-    line = line.strip("*_ ").rstrip(":. ").strip("*_ ")
-    line = re.sub(r"\s*\([^()]*\)$", "", line).rstrip(":*_ ")
-    return re.sub(r"\s+", " ", line).lower()
+    line = re.sub(r"[*`]|(?<!\w)_|_(?!\w)", "", line).strip().rstrip(":. ")
+    return re.sub(r"\s+", " ", line).lower() or original
+
+
+def _heading_matches(line: str, names: list[str]):
+    """
+    Yields a match for each way the line is a heading with one of the names.
+    """
+    heading = _normalize_heading(line)
+    for name in names:
+        name = re.escape(_normalize_heading(name))
+        if not name:
+            continue
+        if match := re.fullmatch(name + HEADING_REST, heading):
+            yield match
+        for part in heading.split("/") if "/" in heading else []:  # "Blockers / Notes" counts as both
+            match = re.fullmatch(name + HEADING_REST, part.strip())
+            if match and not match["tail"]:
+                yield match
 
 
 def _is_heading(line: str, names: list[str]) -> bool:
-    heading = _normalize_heading(line)
-    parts = {heading, *(part.strip("*_: ") for part in heading.split("/"))}  # "Blockers / Notes" counts as both
-    return any(name.lower() in parts or heading.startswith(name.lower() + ":") for name in names)
+    return any(_heading_matches(line, names))
+
+
+def _has_hours(line: str) -> bool:
+    """
+    In a line a duration only counts as working time as an item in brackets or backticks, or after a dash at the end,
+    so that "cut the build time from 2 hours to 5 minutes" and "(30 min timeout)" don't.
+    """
+    for content in re.findall(r"[(\[`]([^()\[\]`]*)[)\]`]", line):
+        items = re.split(r"[,;/|+·]|\s[-–—]\s|\band\b", content)
+        if any(re.fullmatch(HOURS, item.strip(" ."), re.IGNORECASE) for item in items):
+            return True
+    return bool(re.search(rf"(?<!\d)[-–—:]\s*{HOURS}\s*{BRACKETS}?[*_.\s]*$", line, re.IGNORECASE))
+
+
+def _heading_has_hours(line: str, names: list[str]) -> bool:
+    if _has_hours(_normalize_heading(line)):
+        return True
+    for match in _heading_matches(line, names):
+        if re.search(DURATION, re.sub(BRACKETS, "", match["suffix"])):
+            return True
+        if re.match(rf"[:\s–—-]*{HOURS}\s*(?:$|[,;.:+=–—-])", match["tail"] or ""):
+            return True
+    return False
 
 
 def _names(section: str | list[str]) -> list[str]:
@@ -195,14 +256,15 @@ def working_hours(text: str, rule: dict) -> CheckResult:
     the heading ("Today (7 hours)") or on a task ("Write tests (2 hours)").
     """
     sections = [_names(section) for section in rule.get("sections", [])]
-    found, current = set(), None
+    found, current, level = set(), None, 0
     for line in text.splitlines():
+        marks = re.match(r"\s*(#*)", line)[1]
         heading = next((i for i, names in enumerate(sections) if _is_heading(line, names)), None)
         if heading is not None:
-            current = heading
-        elif _is_heading(line, SECTION_END):
+            current, level = heading, len(marks)
+        elif _is_heading(line, SECTION_END) or 0 < len(marks) <= level:  # "## Ideas" ends "## Today", "### Ideas" doesn't
             current = None
-        if current is not None and re.search(DURATION if heading is not None else TASK_DURATION, line, re.IGNORECASE):
+        if current is not None and (_heading_has_hours(line, sections[current]) if heading is not None else _has_hours(line)):
             found.add(current)
     missing = [" / ".join(names) for i, names in enumerate(sections) if i not in found]
     if missing:

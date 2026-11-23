@@ -75,6 +75,50 @@ def test_hours_inside_a_task_description_do_not_count():
     assert result.status == FAIL and "Today" in result.message
 
 
+@pytest.mark.parametrize(
+    "line",
+    ["Today - 7 hours", "Today 7h", "🎯 **Today** — 7h", "Today, Nov 20 (7 hours)", "⏰ Today (7h30m)", "👨‍💻 Today [7h]", ":+1: Today `7h`",
+     ":100: Today: about 7 hours", "Today's (7h)", "1️⃣ Today Nov 20 7h", "Today / Plan (7 hours)", "Today: write tests (2 hours)"],
+)
+def test_headings_with_hours(line):
+    text = f"Yesterday (7 hours)\n- a\n{line}\n- b\nBlockers - none"
+    assert required_sections(text, RULES["has_sections"]).status == PASS
+    assert working_hours(text, RULES["has_hours"]).status == PASS
+
+
+@pytest.mark.parametrize("line", ["Today, I fixed it", "Today 2 hours were lost", "Today's bug was hard", "today-only flag", "Today 5 bugs"])
+def test_sentences_that_start_with_a_section_name_are_not_headings(line):
+    assert required_sections(line, {"id": "x", "sections": ["Today"]}).status == FAIL
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        ("- x (~2 hours)", PASS),
+        ("- x (Merged, 3 hours)", PASS),
+        ("- x - 2 hours (in review)", PASS),
+        ("- x (2-3 hours)", PASS),
+        ("- fix the retry (30 min timeout) bug", FAIL),
+        ("Tomorrow (8 hours)\n- y (3 hours)", FAIL),
+        ("## Ideas\n- y (3 hours)", FAIL),
+        ("### Project A\n- y (3 hours)", PASS),
+    ],
+)
+def test_hours_in_task_lines(line, expected):
+    text = f"## Yesterday (7 hours)\n- a\n## Today\n{line}\n## Blockers\n- None"
+    assert working_hours(text, RULES["has_hours"]).status == expected
+
+
+def test_a_timeout_in_a_heading_line_is_not_working_time():
+    assert working_hours("Yesterday (7h)\nToday: fix the 5 minute timeout", RULES["has_hours"]).status == FAIL
+
+
+@pytest.mark.parametrize("name", ["🎯 Goals", "Tasks (this week)", "CI/CD", "Risks:"])
+def test_section_names_with_emoji_brackets_or_slashes(name):
+    assert required_sections(f"## {name}", {"id": "x", "sections": [name]}).status == PASS
+    assert required_sections("## Tasks (next week)", {"id": "x", "sections": [name]}).status == FAIL
+
+
 # --- Local model ------------------------------------------------------------------------------
 
 

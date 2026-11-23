@@ -17,6 +17,51 @@ REQUIRED_OPTIONS = {
     "pattern": "pattern",
     "llm": "question",
 }
+NUMBER_OPTIONS = {  # option: smallest allowed value
+    "word_count": {"min": 0, "max": 0},
+    "long_sentences": {"max_words": 5},
+    "mention_at_top": {"lines": 1},
+}
+TEXT_OPTIONS = {"pattern": ("pattern", "label"), "llm": ("question",)}
+
+
+def _is_text(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_list_of_text(value, alternatives: bool = False) -> bool:
+    return isinstance(value, list) and all(
+        _is_text(item) or (alternatives and bool(item) and _is_list_of_text(item)) for item in value
+    )
+
+
+def _is_number(value, minimum: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= minimum
+
+
+def _option_problems(rule: dict) -> list[str]:
+    check, problems = rule["check"], []
+    if rule.get("title") and not _is_text(rule["title"]):
+        problems.append("the title must be text.")
+    required = REQUIRED_OPTIONS.get(check)
+    if required and not rule.get(required):
+        problems.append(f"'{required}' is required.")
+    elif required in ("sections", "phrases") and not _is_list_of_text(rule[required], alternatives=required == "sections"):
+        problems.append(f"'{required}' must be a list of text.")
+    for option in TEXT_OPTIONS.get(check, ()):
+        if rule.get(option) and not _is_text(rule[option]):
+            problems.append(f"'{option}' must be text.")
+    numbers = NUMBER_OPTIONS.get(check, {})
+    wrong = [option for option, minimum in numbers.items() if option in rule and not _is_number(rule[option], minimum)]
+    problems += [f"'{option}' must be a whole number, {numbers[option]} or more." for option in wrong]
+    if check == "word_count" and not wrong and rule.get("min") and rule.get("max") and rule["min"] > rule["max"]:
+        problems.append("minimum is larger than maximum.")
+    if check == "pattern" and _is_text(rule.get("pattern")):
+        try:
+            re.compile(rule["pattern"])
+        except re.error as e:
+            problems.append(f"the pattern is not a valid regular expression ({e}).")
+    return problems
 
 
 def validate_style(style: Style) -> list[str]:
@@ -45,14 +90,5 @@ def validate_style(style: Style) -> list[str]:
         if check not in CHECK_TYPES:
             problems.append(f"{label}: unknown check type '{check}'.")
             continue
-        option = REQUIRED_OPTIONS.get(check)
-        if option and not rule.get(option):
-            problems.append(f"{label}: '{option}' is required.")
-        if check == "pattern" and rule.get("pattern"):
-            try:
-                re.compile(rule["pattern"])
-            except re.error as e:
-                problems.append(f"{label}: the pattern is not a valid regular expression ({e}).")
-        if check == "word_count" and rule.get("min") and rule.get("max") and rule["min"] > rule["max"]:
-            problems.append(f"{label}: minimum is larger than maximum.")
+        problems += [f"{label}: {problem}" for problem in _option_problems(rule)]
     return problems

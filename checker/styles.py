@@ -30,12 +30,15 @@ class Style:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Style":
+        detect, rules = data.get("detect") or [], data.get("rules") or []
+        if isinstance(detect, str):
+            detect = detect.split(",")
         return cls(
             id=data["id"],
-            name=data.get("name") or data["id"],
-            description=data.get("description") or "",
-            detect=data.get("detect") or [],
-            rules=data.get("rules") or [],
+            name=str(data.get("name") or data["id"]),
+            description=str(data.get("description") or ""),
+            detect=[str(word).strip() for word in detect],
+            rules=[rule for rule in rules if isinstance(rule, dict)],
         )
 
 

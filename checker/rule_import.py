@@ -9,6 +9,7 @@ from checker import llm_checks
 from checker.styles import Style, slugify
 
 MAX_CHARS = 12000
+MAX_ANSWER_TOKENS = 1000  # more than a check's answer, but within Groq's limit per minute for Qwen
 
 PROMPT = """You turn a team's written rules for one kind of document into rules for an automatic checker.
 
@@ -43,6 +44,13 @@ def draft_style(text: str, model: str = llm_checks.DEFAULT_MODEL, client=None) -
         messages=[{"role": "user", "content": PROMPT.format(text=text[:MAX_CHARS])}],
         temperature=0,
         response_format={"type": "json_object"},
+        **llm_checks.token_cap(model, MAX_ANSWER_TOKENS),
     )
-    data = json.loads(response.choices[0].message.content)
-    return Style.from_dict({**data, "id": slugify(data.get("name", "")) or "new_style"})
+    try:
+        data = json.loads(response.choices[0].message.content or "")
+    except json.JSONDecodeError as e:
+        raise ValueError("the AI's answer was cut off or unreadable. Try a shorter document or a gpt-oss model.") from e
+    rules = data.get("rules") if isinstance(data, dict) else None
+    if not isinstance(rules, list) or not all(isinstance(rule, dict) and isinstance(rule.get("check"), str) for rule in rules):
+        raise ValueError("the AI's answer isn't a list of rules. Try again or choose another model.")
+    return Style.from_dict({**data, "id": slugify(str(data.get("name") or "")) or "new_style"})

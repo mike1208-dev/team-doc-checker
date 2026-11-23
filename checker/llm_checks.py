@@ -46,11 +46,11 @@ def default_client(model: str = DEFAULT_MODEL):
     return Groq()  # reads GROQ_API_KEY
 
 
-def token_cap(model: str) -> dict:
+def token_cap(model: str, tokens: int = MAX_ANSWER_TOKENS) -> dict:
     """
     gpt-oss models think before they answer, which a small cap would cut off.
     """
-    return {} if model.startswith("openai/gpt-oss") else {"max_completion_tokens": MAX_ANSWER_TOKENS}
+    return {} if model.startswith("openai/gpt-oss") else {"max_completion_tokens": tokens}
 
 
 def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) -> CheckResult:
@@ -68,16 +68,21 @@ def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) ->
             response_format={"type": "json_object"},
             **token_cap(model),
         )
-        answer = json.loads(response.choices[0].message.content)
-    except json.JSONDecodeError:
-        return CheckResult.from_rule(rule, WARN, message="The AI gave an unreadable answer. Check this rule by hand.")
+        content = response.choices[0].message.content
     except Exception as e:  # no API key, rate limit, model retired, model file missing, ...
         return CheckResult.from_rule(rule, SKIP, message=f"AI check skipped: {e}")
 
+    try:
+        answer = json.loads(content or "")
+    except json.JSONDecodeError:
+        answer = None
+    if not isinstance(answer, dict):
+        return CheckResult.from_rule(rule, WARN, message="The AI gave an unreadable answer. Check this rule by hand.")
+
     status = VERDICTS.get(str(answer.get("verdict", "")).lower(), WARN)
-    message = str(answer.get("reason", "")).strip()
+    message = str(answer.get("reason") or "").strip()
     if truncated:
         message += f" (Only the first {MAX_CHARS} characters were checked.)"
-    quote = str(answer.get("quote", "")).strip()
+    quote = str(answer.get("quote") or "").strip()
     where = f'"{quote[:80]}"' if quote and status != PASS else ""
     return CheckResult.from_rule(rule, status, where=where, message=message)
