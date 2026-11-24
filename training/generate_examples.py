@@ -37,60 +37,87 @@ BREAKS = {
         "one finished task has no status, PR number, link, check mark or other result",
         "none of the finished tasks has a status, PR number, link, check mark or other result",
     ],
-    "overall_progress": ["nothing says how far the overall work is or what is left, only separate small tasks"],
     "clear_and_short": [
         "several lines repeat the same thing in almost the same words",
         "one task has far too much needless detail",
         "a long, confusing sentence makes it hard to see what was done",
     ],
     "terms_explained": [
-        "it uses an uncommon abbreviation without explaining it",
+        "it uses the advanced term {advanced} without explaining it",
+        "it uses the advanced term {advanced} without explaining it, next to common software terms",
         "it uses an unclear internal name or code word without explaining it",
+        "it uses the name of a new tool or feature without explaining it",
     ],
     "real_blockers": [
         "Blockers says 'None', but a task mentions a problem that stops the work",
         "the blocker is too vague to act on",
     ],
 }
-NEEDS_NO_QUOTE = {"overall_progress"}  # broken by something missing, so there is nothing to quote
+# General terms that must be explained. Some others are left out on purpose, to test terms the model never saw in training.
+ADVANCED_TERMS = [
+    "VPC", "OIDC", "SSO", "APM", "CVE", "ECS", "ECR", "ALB", "SQS", "LRU", "MFA", "LDAP", "MLOps", "LoRA", "MCP", "CMK", "CloudFront", "CloudWatch",
+    "CQRS", "BFF", "SAML", "mTLS", "gRPC", "RBAC", "CDC", "DLQ", "HPA", "SLO", "FHIR", "ETag",
+]
+# Different ways to follow a rule, for the rules where the good reports all looked alike
+FOLLOWS = {
+    "terms_explained": [
+        "several common software terms (such as {terms}) are used without an explanation, and there are no new, advanced or internal terms",
+        "several common software terms (such as {terms}) are used without an explanation, and the advanced term {advanced} is explained in a few words",
+    ],
+}
 
 RAW_CODES = re.compile(r"\\n|U[0-9a-fA-F]{8}|\\u[0-9a-fA-F]{4}")
 
 ROLES = ["frontend engineer", "backend engineer", "QA engineer", "mobile engineer", "data engineer", "designer", "project manager", "trainee engineer"]
 TOPICS = ["an online shop", "a booking system", "a hospital records app", "a payroll tool", "a language learning app",
           "a delivery tracker", "a chat feature", "a reporting dashboard", "a school website", "an inventory system"]
-LENGTHS = ["short (2-3 tasks)", "medium (4-6 tasks)", "long (7-9 tasks)"]
+# Real reports are long, and the writer makes them shorter than asked
+LENGTHS = [
+    "medium (4-6 tasks, about 500 characters)",
+    "long (7-9 tasks, at least 1000 characters)",
+    "very long (10-14 tasks, some with nested details, at least 1600 characters)",
+]
 LAYOUTS = ["Markdown headings and bullets", "Slack style with emoji section titles and nested bullets", "plain text with simple dashes"]
 FIRST_SECTIONS = ["Yesterday", "Weekend"]
+# The overall progress is checked by code, but the reports have the line, so the model must not see it as a blocker
+LAST_LINES = ["", "In both reports, the last line of Blockers says how far the whole work is, starting with 'Overall:'.\n"]
 
 PROMPT = """You write realistic, made-up daily work reports to train a checker.
 
 Rule: {question}
 
 Write two reports:
-- "good" follows the rule.
+- "good" follows the rule{follow}.
 - "broken" is the same report, changed only as much as needed to break the rule like this: {how}.
 
 Writer: {role}. Work: {topic}. Length: {length}. Layout: {layout}.
 Use the sections {first}, Today and Blockers. Today is the plan, so don't write finished work there.
-Keep the formatting (bold, emoji, bullets) the same in both reports. Use invented names only, and no real companies, links or passwords.
+{last}Keep the formatting (bold, emoji, bullets) the same in both reports. Use invented names only, and no real companies, links or passwords.
 Don't mention the rule, copy the examples in it, or say that a report is good or broken. Break it in a way that fits the topic.
 
 Answer only with JSON in exactly this format:
-{{"good": "the full good report", "good_reason": "one short sentence on why it follows the rule", "broken": "the full broken report", "broken_reason": "one short sentence on how it breaks the rule", "broken_quote": "the exact text in the broken report that breaks the rule{no_quote}"}}"""
+{{"good": "the full good report", "good_reason": "one short sentence on why it follows the rule", "broken": "the full broken report", "broken_reason": "one short sentence on how it breaks the rule", "broken_quote": "the exact text in the broken report that breaks the rule"}}"""
 
 
 def make_prompt(rule: dict, attempt: int) -> str:
     rng = random.Random(f"{rule['id']}-{attempt}")  # the same attempt always gets the same settings
+    terms = [term for term in rule.get("known_terms", []) if term != term.lower()] or ["API", "PR", "UI"]  # the names and short forms
+    advanced = rng.choice(ADVANCED_TERMS)
+    follow = rng.choice(FOLLOWS.get(rule["id"], [""]))
+    breaks = BREAKS[rule["id"]]
+    if "{advanced}" in follow:  # the same term in both reports, so only the explanation makes the difference
+        breaks = [how for how in breaks if "{advanced}" in how]
+    follow = follow.format(terms=", ".join(rng.sample(terms, 3)), advanced=advanced)
     return PROMPT.format(
         question=rule["question"],
-        how=rng.choice(BREAKS[rule["id"]]),
+        how=rng.choice(breaks).format(advanced=advanced),
+        follow=f" like this: {follow}" if follow else "",
         role=rng.choice(ROLES),
         topic=rng.choice(TOPICS),
         length=rng.choice(LENGTHS),
         layout=rng.choice(LAYOUTS),
         first=rng.choice(FIRST_SECTIONS),
-        no_quote="; here an empty string, because something is missing" if rule["id"] in NEEDS_NO_QUOTE else "",
+        last=rng.choice(LAST_LINES),
     )
 
 
@@ -103,7 +130,7 @@ def formatting_changed(good: str, broken: str) -> bool:
     return any(key in plain and plain[key].count("*") != line.count("*") for key, line in lines.items())
 
 
-def problem_with(pair: dict, rule_id: str) -> str:
+def problem_with(pair: dict) -> str:
     """
     Why a pair can't be used, or an empty string if it's fine.
     """
@@ -119,7 +146,7 @@ def problem_with(pair: dict, rule_id: str) -> str:
     if formatting_changed(pair["good"], pair["broken"]):
         return "the formatting changed too"
     quote = pair["broken_quote"].strip()
-    if not quote and rule_id not in NEEDS_NO_QUOTE:
+    if not quote:
         return "there is no quote"
     if quote and quote not in pair["broken"]:
         return "the quote isn't in the broken report"
@@ -161,10 +188,8 @@ def make_pair(rule: dict, attempt: int, client, writer: str = WRITER) -> dict:
 
     if not isinstance(pair, dict):
         return {**row, "kept": False, "why": "the answer isn't a JSON object"}
-    if rule["id"] in NEEDS_NO_QUOTE:
-        pair["broken_quote"] = ""
     row.update({key: pair.get(key) for key in ("good", "good_reason", "broken", "broken_reason", "broken_quote")})
-    if why := problem_with(pair, rule["id"]):
+    if why := problem_with(pair):
         return {**row, "kept": False, "why": why}
     statuses = judge_pair(pair, rule, client)
     agreed = statuses == {"good": PASS, "broken": FAIL}

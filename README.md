@@ -79,9 +79,9 @@ Open http://localhost:8501, paste or upload a daily report and click **Check dai
 | `has_hours` | code | It gives hours for both Yesterday (spent) and Today (planned) |
 | `concrete_tasks` | AI | Each task says what was done or will be done |
 | `status_or_result` | AI | Each finished task has a status or result |
-| `overall_progress` | AI | It says how far the overall work is, or what is left |
+| `overall_progress` | code | Blockers / Notes has a line such as `Overall: 60% done. Payment is left.` |
 | `clear_and_short` | AI | It is easy to read, with no repeated lines or needless detail |
-| `terms_explained` | AI | Abbreviations and unclear terms are explained |
+| `terms_explained` | AI | New, advanced or internal terms are explained (common software terms, such as PR or API, need no explanation) |
 | `real_blockers` | AI | Blockers are stated clearly, or "None" when there are none |
 
 If the database still has the old example rules: **Manage rules** → Daily report → **Use the built-in rules**.
@@ -164,7 +164,8 @@ rules:
 | `pattern` | `pattern` (regular expression), `must`: `match` / `not_match`, `label` | ❌ if missing (or found, with `not_match`) |
 | `mention_at_top` | `lines` (default 3) | ❌ if nobody is tagged with @ in the first lines |
 | `working_hours` | `sections`: same shape as in `required_sections` | ❌ if a section gives no hours |
-| `llm` | `question`: the rule as a yes/no question | ✅ / ❌ / ⚠️ from the AI |
+| `labelled_line` | `sections`: same shape as in `required_sections`; `labels`: accepted labels, e.g. `["Overall"]` | ❌ if none of the sections has a line such as `Overall: 60% done` |
+| `llm` | `question`: the rule as a yes/no question; `known_terms` (optional): a fail that is only about these terms becomes a pass | ✅ / ❌ / ⚠️ from the AI |
 
 Use plain checks wherever possible; use `llm` only for rules that need understanding.
 

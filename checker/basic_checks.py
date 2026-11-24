@@ -55,6 +55,8 @@ HEADING_REST = (
 # Sections that end the ones with hours
 SECTION_END = ["Blockers", "Notes", "Issues", "Problems", "Risks", "Questions", "Tomorrow", "Next steps", "Next week", "Overall progress"]
 
+NO_ANSWER = {"", "none", "n/a", "na", "tbd", "todo", "unknown", "?"}
+
 
 def _normalize_heading(line: str) -> str:
     # "## 1. Done:", "**Done**", "Done:" -> "done"; Slack: "• :dart: *Today (7 hours)*" -> "today (7 hours)"
@@ -250,21 +252,51 @@ def mention_at_top(text: str, rule: dict) -> CheckResult:
     return CheckResult.from_rule(rule, FAIL, message="No reviewer is tagged at the top. Add one, e.g. @Name.")
 
 
+def _section_lines(text: str, sections: list[list[str]], ends: list[str]):
+    """
+    Yields (section index, whether it's the heading, line) for the lines in the sections. The headings in ends close a section.
+    """
+    current, level = None, 0
+    for line in text.splitlines():
+        marks = re.match(r"\s*(#*)", line)[1]
+        heading = next((i for i, names in enumerate(sections) if _is_heading(line, names)), None)
+        if heading is not None:
+            current, level = heading, len(marks)
+        elif _is_heading(line, ends) or 0 < len(marks) <= level:  # "## Ideas" ends "## Today", "### Ideas" doesn't
+            current = None
+        if current is not None:
+            yield current, heading is not None, line
+
+
+def labelled_line(text: str, rule: dict) -> CheckResult:
+    """
+    rule.sections: where to look, same shape as in required_sections.
+    rule.labels: accepted labels. A line such as "Overall: 60% done. Payment is left." must be in one of the sections.
+    """
+    sections, labels = [_names(section) for section in rule.get("sections", [])], rule.get("labels", [])
+    names = "|".join(re.escape(label) for label in sorted(labels, key=len, reverse=True))
+    start = re.compile(rf"(?:{names})(?:\s*[:：]|\s+[-–—]\s)(.*)", re.IGNORECASE)
+    ends = [name for name in ["Yesterday", "Weekend", "Today", *SECTION_END] if name.lower() not in {label.lower() for label in labels}]
+    for _, is_heading, line in _section_lines(text, sections, ends):
+        line = re.sub(rf"^\s*(?:{BULLET})?\s*", "", re.sub(r"[*_`]", "", re.sub(EMOJI, " ", line)))
+        match = start.search(line) if is_heading else start.match(line)  # "Notes: Overall: 60% done" is fine too
+        if match and match[1].strip(" .-–—").lower() not in NO_ANSWER:
+            return CheckResult.from_rule(rule, PASS)
+    place = ", ".join(" / ".join(section) for section in sections)
+    return CheckResult.from_rule(
+        rule, FAIL, message=f"No '{labels[0]}:' line in {place}. Add one, e.g. {labels[0]}: 60% done. Payment is left."
+    )
+
+
 def working_hours(text: str, rule: dict) -> CheckResult:
     """
     rule.sections: sections that must give hours, same shape as in required_sections. The hours can be in
     the heading ("Today (7 hours)") or on a task ("Write tests (2 hours)").
     """
     sections = [_names(section) for section in rule.get("sections", [])]
-    found, current, level = set(), None, 0
-    for line in text.splitlines():
-        marks = re.match(r"\s*(#*)", line)[1]
-        heading = next((i for i, names in enumerate(sections) if _is_heading(line, names)), None)
-        if heading is not None:
-            current, level = heading, len(marks)
-        elif _is_heading(line, SECTION_END) or 0 < len(marks) <= level:  # "## Ideas" ends "## Today", "### Ideas" doesn't
-            current = None
-        if current is not None and (_heading_has_hours(line, sections[current]) if heading is not None else _has_hours(line)):
+    found = set()
+    for current, is_heading, line in _section_lines(text, sections, SECTION_END):
+        if _heading_has_hours(line, sections[current]) if is_heading else _has_hours(line):
             found.add(current)
     missing = [" / ".join(names) for i, names in enumerate(sections) if i not in found]
     if missing:
@@ -284,4 +316,5 @@ CHECKS = {
     "pattern": pattern,
     "mention_at_top": mention_at_top,
     "working_hours": working_hours,
+    "labelled_line": labelled_line,
 }

@@ -12,6 +12,7 @@ ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,49}$")
 REQUIRED_OPTIONS = {
     "required_sections": "sections",
     "working_hours": "sections",
+    "labelled_line": "sections",
     "forbidden_phrases": "phrases",
     "must_contain": "phrases",
     "pattern": "pattern",
@@ -51,6 +52,10 @@ def _option_problems(rule: dict) -> list[str]:
     for option in TEXT_OPTIONS.get(check, ()):
         if rule.get(option) and not _is_text(rule[option]):
             problems.append(f"'{option}' must be text.")
+    if check == "labelled_line" and not (rule.get("labels") and _is_list_of_text(rule["labels"])):
+        problems.append("'labels' must be a list of text.")
+    if rule.get("known_terms") and not _is_list_of_text(rule["known_terms"]):
+        problems.append("'known_terms' must be a list of text.")
     numbers = NUMBER_OPTIONS.get(check, {})
     wrong = [option for option, minimum in numbers.items() if option in rule and not _is_number(rule[option], minimum)]
     problems += [f"'{option}' must be a whole number, {numbers[option]} or more." for option in wrong]

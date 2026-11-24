@@ -28,6 +28,7 @@ CHECK_LABELS = {
     "pattern": "Pattern (regular expression)",
     "mention_at_top": "Tags someone at the top",
     "working_hours": "Working hours in sections",
+    "labelled_line": "Labelled line in a section",
     "llm": "AI question",
 }
 DEFAULT_OPTIONS = {
@@ -39,6 +40,7 @@ DEFAULT_OPTIONS = {
     "pattern": {"pattern": "", "must": "match", "label": ""},
     "mention_at_top": {"lines": 3},
     "working_hours": {"sections": []},
+    "labelled_line": {"sections": [], "labels": []},
     "llm": {"question": ""},
 }
 
@@ -96,13 +98,16 @@ def rule_fields(rule: dict, key: str) -> None:
     rule["id"] = col2.text_input("Rule ID", str(rule.get("id") or ""), key=f"{key}_id")
     check = rule.get("check")
 
-    if check in ("required_sections", "working_hours"):
+    if check in ("required_sections", "working_hours", "labelled_line"):
         text = st.text_area(
             "Sections, one per line. Accept alternatives with / between spaces, e.g. Blockers / Issues",
             list_to_lines(rule.get("sections")),
             key=f"{key}_sections",
         )
         rule["sections"] = lines_to_list(text, alternatives=True)
+        if check == "labelled_line":
+            text = st.text_area("Labels, one per line, e.g. Overall", list_to_lines(rule.get("labels")), key=f"{key}_labels")
+            rule["labels"] = lines_to_list(text)
     elif check in ("forbidden_phrases", "must_contain"):
         text = st.text_area("Words or phrases, one per line", list_to_lines(rule.get("phrases")), key=f"{key}_phrases")
         rule["phrases"] = lines_to_list(text)
@@ -139,6 +144,12 @@ def rule_fields(rule: dict, key: str) -> None:
         rule["question"] = st.text_area(
             "Yes/no question for the AI ('yes' = the rule is followed)", str(rule.get("question") or ""), key=f"{key}_question"
         )
+        text = st.text_area(
+            "Known terms that need no explanation, one per line (optional)", list_to_lines(rule.get("known_terms")), key=f"{key}_known_terms"
+        )
+        rule.pop("known_terms", None)
+        if terms := lines_to_list(text):
+            rule["known_terms"] = terms
     elif check == "mention_at_top":
         rule["lines"] = int(
             st.number_input("Lines that count as the top", min_value=1, value=as_number(rule.get("lines"), 3, 1), key=f"{key}_lines")

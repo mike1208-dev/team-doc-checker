@@ -63,7 +63,7 @@ def test_run_checks_without_ai(styles):
     by_id = {r.rule_id: r for r in results}
     assert by_id["has_sections"].status == PASS
     assert by_id["concrete_tasks"].status == SKIP
-    assert summary(results).endswith("(6 skipped)")
+    assert summary(results).endswith("(5 skipped)")
 
 
 @pytest.mark.parametrize(
@@ -72,6 +72,7 @@ def test_run_checks_without_ai(styles):
         (FakeClient(json.dumps({"verdict": "pass", "reason": "ok", "quote": ""})), PASS),
         (FakeClient(json.dumps({"verdict": "fail", "reason": "vague", "quote": "worked on stuff"})), FAIL),
         (FakeClient(json.dumps({"verdict": "unsure", "reason": "?", "quote": ""})), WARN),
+        (FakeClient('{"verdict": "fail", "reason": "x", "quote": "two\nlines"}'), FAIL),  # a line break in a quote
         (FakeClient("not json"), WARN),
         (FakeClient("[]"), WARN),
         (FakeClient("null"), WARN),
@@ -83,6 +84,32 @@ def test_llm_rule_results(client, expected):
     style = Style(id="t", name="Test", rules=[{"id": "clear", "check": "llm", "question": "Is it clear?"}])
     [result] = run_checks("Some text.", style, client=client)
     assert result.status == expected
+
+
+@pytest.mark.parametrize(
+    "reason, quote, expected",
+    [
+        ("It uses the abbreviation 'Workflow' without explanation.", "", PASS),
+        ("It uses the abbreviation FEAT without explanation.", "", PASS),
+        ("Unexplained terms 'APIs' and 'C/C++'.", "", PASS),
+        ("It uses an unexplained term.", "- API", PASS),
+        ("It uses the abbreviation IPA without explanation.", "IPA", FAIL),
+        ("Unexplained terms 'API' and 'IPA'.", "", FAIL),
+        ("It uses an internal name without explanation.", "Update the Flux API", FAIL),  # Flux is unknown
+        ("It uses an internal name without explanation.", "", FAIL),  # names nothing
+    ],
+)
+def test_known_terms_are_not_a_problem(reason, quote, expected):
+    rule = {"id": "terms", "check": "llm", "question": "Explained?", "known_terms": ["API", "FEAT", "workflow", "C/C++"]}
+    client = FakeClient(json.dumps({"verdict": "fail", "reason": reason, "quote": quote}))
+    [result] = run_checks("Some text.", Style(id="t", name="Test", rules=[rule]), client=client)
+    assert result.status == expected
+
+
+def test_a_fail_is_kept_without_known_terms():
+    client = FakeClient(json.dumps({"verdict": "fail", "reason": "It uses 'API'.", "quote": ""}))
+    [result] = run_checks("Some text.", Style(id="t", name="Test", rules=[{"id": "a", "check": "llm", "question": "?"}]), client=client)
+    assert result.status == FAIL
 
 
 def test_a_document_with_a_secret_is_not_sent_to_the_ai_service(styles):

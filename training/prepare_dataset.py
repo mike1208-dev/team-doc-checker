@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from checker.llm_checks import MAX_CHARS, PROMPT
-from training.generate_examples import OUTPUT, read_rows
+from training.generate_examples import OUTPUT, ai_rules, read_rows
 
 FOLDER = OUTPUT.parent
 VAL_SHARE = 0.1
@@ -61,11 +61,12 @@ def write(path: Path, examples: list[dict]) -> None:
 
 def prepare(folder: Path = FOLDER) -> dict[str, int]:
     rejected_file = folder / "rejected.txt"
+    checked_by_ai = {rule["id"] for rule in ai_rules()}
     rejected = set(rejected_file.read_text(encoding="utf-8").split()) if rejected_file.exists() else set()
     rows = [
         row
         for row in read_rows(folder / OUTPUT.name)
-        if row["kept"] and f"{row['rule_id']}-{row['attempt']}" not in rejected
+        if row["kept"] and row["rule_id"] in checked_by_ai and f"{row['rule_id']}-{row['attempt']}" not in rejected
     ]
     train_rows, val_rows = split(rows)
     sizes = {}

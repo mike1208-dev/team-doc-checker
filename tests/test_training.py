@@ -63,12 +63,8 @@ def test_every_ai_rule_has_ways_to_break_it():
     ],
 )
 def test_problem_with(change, expected):
-    problem = problem_with({**PAIR, **change}, "concrete_tasks")
+    problem = problem_with({**PAIR, **change})
     assert expected in problem and bool(problem) == bool(expected)
-
-
-def test_missing_progress_needs_no_quote():
-    assert problem_with({**PAIR, "broken_quote": ""}, "overall_progress") == ""
 
 
 def test_generate_keeps_agreed_pairs_and_continues(tmp_path):

@@ -4,7 +4,7 @@ import sys
 import pytest
 
 from checker import llm_checks, local_model
-from checker.basic_checks import mention_at_top, required_sections, working_hours
+from checker.basic_checks import labelled_line, mention_at_top, required_sections, working_hours
 from checker.report import run_checks
 from checker.result import FAIL, PASS, SKIP
 from checker.styles import Style, load_styles
@@ -107,6 +107,32 @@ def test_sentences_that_start_with_a_section_name_are_not_headings(line):
 def test_hours_in_task_lines(line, expected):
     text = f"## Yesterday (7 hours)\n- a\n## Today\n{line}\n## Blockers\n- None"
     assert working_hours(text, RULES["has_hours"]).status == expected
+
+
+@pytest.mark.parametrize(
+    "notes, expected",
+    [
+        ("🚧 Blockers / 📝 Notes\n- None\n- Overall: 60% done. Payment is left.", PASS),
+        ("• :construction: *Blockers /* :memo:*Notes:*\n    ◦ None\n    ◦ *Overall:* 60% done", PASS),
+        ("Blockers\n- None\nOverall progress: only the tests are left", PASS),
+        ("## Blockers\n- None\n## Notes\n- **Overall** - 3 of 5 steps", PASS),
+        ("Blockers / Notes: None. Overall: 60% done", PASS),
+        ("Blockers\n- None", FAIL),
+        ("Blockers\n- None\n- Overall: TBD", FAIL),
+        ("Blockers\n- None\n- Overall:", FAIL),
+        ("Blockers\n- The overall design is late", FAIL),
+        ("Blockers\n- None\n## Tomorrow\n- Overall: 60% done", FAIL),
+    ],
+)
+def test_overall_line_in_the_blockers_section(notes, expected):
+    assert labelled_line(f"Yesterday (7h)\n- a\nToday (7h)\n- b\n{notes}", RULES["overall_progress"]).status == expected
+
+
+def test_overall_line_outside_the_blockers_section():
+    text = "Yesterday (7h)\n- a\nToday (7h)\n- Overall: 60% done\nBlockers\n- None"
+    result = labelled_line(text, RULES["overall_progress"])
+    assert result.status == FAIL and "Blockers / Notes" in result.message
+    assert labelled_line("Blockers\n- None\nToday\n- Overall: 60% done", RULES["overall_progress"]).status == FAIL
 
 
 def test_a_timeout_in_a_heading_line_is_not_working_time():

@@ -5,6 +5,7 @@ Groq's cloud API (free tier, needs GROQ_API_KEY) or a small model inside the app
 
 import json
 import os
+import re
 
 from checker import local_model
 from checker.result import FAIL, PASS, SKIP, WARN, CheckResult
@@ -36,6 +37,22 @@ Answer only with JSON in exactly this format:
 {{"verdict": "pass" | "fail" | "unsure", "reason": "one short sentence", "quote": "the exact text that breaks the rule, or an empty string"}}"""
 
 VERDICTS = {"pass": PASS, "fail": FAIL}
+QUOTED_TERM = re.compile(r"['‘\"“]([^'’\"”]+)['’\"”]")
+CAPITAL_TERM = re.compile(r"\b[A-Z][A-Za-z0-9+.#/]*[A-Z0-9+][A-Za-z0-9+#/]*")
+
+
+def only_known_terms(known: list[str], reason: str, quote: str) -> bool:
+    """
+    Whether every term the AI complains about is a known one. Without a clear term it's False, so the fail stays.
+    """
+    named = QUOTED_TERM.findall(reason) or CAPITAL_TERM.findall(reason) or ([quote] if quote else [])
+    known = {term.lower() for term in known}
+
+    def is_known(text: str) -> bool:
+        text = text.strip(" .,:;-*`").lower()
+        return text in known or text.removesuffix("s") in known
+
+    return bool(named) and all(is_known(term) or all(is_known(word) for word in term.split()) for term in named if term.strip())
 
 
 def default_client(model: str = DEFAULT_MODEL):
@@ -56,6 +73,7 @@ def token_cap(model: str, tokens: int = MAX_ANSWER_TOKENS) -> dict:
 def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) -> CheckResult:
     """
     rule.question: the rule written as a yes/no question for the model.
+    rule.known_terms: terms that are never a problem, so a fail that is only about them becomes a pass.
     """
     truncated = len(text) > MAX_CHARS
     prompt = PROMPT.format(question=rule.get("question", rule.get("title", "")), text=text[:MAX_CHARS])
@@ -73,7 +91,7 @@ def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) ->
         return CheckResult.from_rule(rule, SKIP, message=f"AI check skipped: {e}")
 
     try:
-        answer = json.loads(content or "")
+        answer = json.loads(content or "", strict=False)  # the local model may put a line break inside a quote
     except json.JSONDecodeError:
         answer = None
     if not isinstance(answer, dict):
@@ -81,6 +99,8 @@ def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) ->
 
     status = VERDICTS.get(str(answer.get("verdict", "")).lower(), WARN)
     message = str(answer.get("reason") or "").strip()
+    if status == FAIL and only_known_terms(rule.get("known_terms") or [], message, str(answer.get("quote") or "")):
+        status, message = PASS, "The AI only named terms that are on the known terms list."
     if truncated:
         message += f" (Only the first {MAX_CHARS} characters were checked.)"
     quote = str(answer.get("quote") or "").strip()
