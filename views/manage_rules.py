@@ -14,6 +14,7 @@ from checker.rule_import import MAX_CHARS, draft_style
 from checker.store import StoreError, YamlStore, get_store
 from checker.styles import Style, slugify
 from checker.validation import CHECK_TYPES, validate_style
+from views.design import page_ready
 from views.shared import ai_models, clear_styles_cache, model_label, privacy_note
 
 NEW = "➕ New style"
@@ -160,6 +161,7 @@ def rule_fields(rule: dict, key: str) -> None:
         st.warning(f"Unknown check type '{check}'. Delete this rule or fix it.")
 
 
+page_ready()
 st.title("⚙️ Manage rules")
 
 store = get_store()
@@ -193,7 +195,8 @@ if message := st.session_state.pop("flash", None):
     st.success(message)
 
 try:
-    styles = store.list_styles()
+    with st.spinner("Loading the rules..."):
+        styles = store.list_styles()
 except StoreError as e:
     st.error(str(e))
     st.stop()

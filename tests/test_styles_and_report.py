@@ -189,3 +189,23 @@ def test_missing_groq_package_or_key_is_skipped(monkeypatch):
     style = Style(id="t", name="Test", rules=[{"id": "clear", "check": "llm", "question": "Is it clear?"}])
     [result] = run_checks("Some text.", style)
     assert result.status == SKIP
+
+
+def test_errors_of_the_ai_service_are_not_shown():
+    class Client:
+        def __init__(self, text, status):
+            self.error = ConnectionError(text)
+            self.error.status_code = status
+            self.chat = self.completions = self
+
+        def create(self, **_):
+            raise self.error
+
+    rule = {"id": "r", "title": "R", "check": "llm", "question": "ok?"}
+    for text, status, expected in (
+        ("Rate limit reached in organization org_123", 429, "limit is reached"),
+        ("tokens per day (TPD) in organization org_123", 429, "Today's free limit"),
+        ("org_123", 500, "didn't answer"),
+    ):
+        message = run_checks("text", Style(id="s", name="S", rules=[rule]), client=Client(text, status))[0].message
+        assert expected in message and "org_123" not in message

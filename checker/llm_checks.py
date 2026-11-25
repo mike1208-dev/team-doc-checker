@@ -113,6 +113,21 @@ def default_client(model: str = DEFAULT_MODEL):
     return Groq()  # reads GROQ_API_KEY
 
 
+def error_text(error: Exception) -> str:
+    """
+    An error for the user. The answers of the service can have account details, so they're only printed to the log.
+    """
+    status = getattr(error, "status_code", None)
+    if status is None:
+        return str(error)  # no API key, no connection, model file missing, ...
+    print(f"AI service: {type(error).__name__}: {error}", flush=True)
+    if status == 429 and "per day" in str(error):
+        return "Today's free limit of this AI model is used up. Choose another model, or try later."
+    if status == 429:
+        return "The AI service's limit is reached. Wait a minute and try again, or choose another model."
+    return f"The AI service didn't answer ({type(error).__name__}). Try again, or choose another model."
+
+
 def token_cap(model: str, tokens: int = MAX_ANSWER_TOKENS) -> dict:
     """
     gpt-oss models think before they answer, which a small cap would cut off.
@@ -138,7 +153,7 @@ def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) ->
         )
         content = response.choices[0].message.content
     except Exception as e:  # no API key, rate limit, model retired, model file missing, ...
-        return CheckResult.from_rule(rule, SKIP, message=f"AI check skipped: {e}")
+        return CheckResult.from_rule(rule, SKIP, message=f"AI check skipped: {error_text(e)}")
 
     try:
         # The local model may put a line break inside a quote. Other control characters mean a broken answer

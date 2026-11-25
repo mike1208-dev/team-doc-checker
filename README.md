@@ -1,4 +1,4 @@
-# ZeeChecker: Daily Report Checker
+# ZeeChecker: Daily Report Writer and Checker
 
 Live app: https://zeecheck.streamlit.app
 
@@ -28,7 +28,9 @@ rules: Supabase database (editable in the app)  ──fallback──►  rules/*
 | Path | Purpose |
 |---|---|
 | `app.py` | Entry point: page navigation |
-| `views/check.py` | **Check daily report** page |
+| `views/write.py` | **Write daily report** page (v2): plain notes in, a report in the team's template out |
+| `views/design.py`, `views/design.css` | The header, colors and layout |
+| `views/check.py` | The v1 **Check daily report** page (not in the app now) |
 | `views/manage_rules.py` | **Manage rules** page (editors only) |
 | `rules/*.yaml` | Example styles: fallback when there's no database, and the starting rules for a new one |
 | `supabase/migrations/` | Database tables and the history trigger |
@@ -40,6 +42,9 @@ rules: Supabase database (editable in the app)  ──fallback──►  rules/*
 | `checker/basic_checks.py` | Rule checks in plain Python |
 | `checker/llm_checks.py` | Rule checks by the AI |
 | `checker/local_model.py` | Runs a small model inside the app |
+| `checker/writer.py` | Sorts plain notes into fields with the AI, checks them against the notes, and writes the report |
+| `checker/markup.py` | Turns the report's Markdown into HTML (preview) and Slack's format (copy) |
+| `checker/statuses.py` | Finds which statuses the notes support |
 | `checker/report.py` | Runs all rules; builds the summary, table and Markdown report |
 | `tests/` | pytest tests (no API key or network needed) |
 
