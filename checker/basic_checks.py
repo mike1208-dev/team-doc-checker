@@ -55,6 +55,8 @@ HEADING_REST = (
 # Sections that end the ones with hours
 SECTION_END = ["Blockers", "Notes", "Issues", "Problems", "Risks", "Questions", "Tomorrow", "Next steps", "Next week", "Overall progress"]
 
+# Sections that end Blockers / Notes. "Issues: none" in it doesn't
+LABEL_SECTION_END = ["Yesterday", "Weekend", "Today", "Tomorrow", "Next steps", "Next week"]
 NO_ANSWER = {"", "none", "n/a", "na", "tbd", "todo", "unknown", "?"}
 
 
@@ -271,21 +273,35 @@ def _section_lines(text: str, sections: list[list[str]], ends: list[str]):
 def labelled_line(text: str, rule: dict) -> CheckResult:
     """
     rule.sections: where to look, same shape as in required_sections.
-    rule.labels: accepted labels. A line such as "Overall: 60% done. Payment is left." must be in one of the sections.
+    rule.labels: accepted labels. One of the sections must have a line such as "Overall: 60% done. Payment is left."
+    The text can also be on the next line, under the label.
     """
     sections, labels = [_names(section) for section in rule.get("sections", [])], rule.get("labels", [])
     names = "|".join(re.escape(label) for label in sorted(labels, key=len, reverse=True))
-    start = re.compile(rf"(?:{names})(?:\s*[:：]|\s+[-–—]\s)(.*)", re.IGNORECASE)
-    ends = [name for name in ["Yesterday", "Weekend", "Today", *SECTION_END] if name.lower() not in {label.lower() for label in labels}]
-    for _, is_heading, line in _section_lines(text, sections, ends):
-        line = re.sub(rf"^\s*(?:{BULLET})?\s*", "", re.sub(r"[*_`]", "", re.sub(EMOJI, " ", line)))
-        match = start.search(line) if is_heading else start.match(line)  # "Notes: Overall: 60% done" is fine too
-        if match and match[1].strip(" .-–—").lower() not in NO_ANSWER:
+    start = re.compile(rf"(?<!\w)(?:{names})(?:\s*[:：]|\s+[-–—]\s)(.*)", re.IGNORECASE)
+    label_only = re.compile(rf"(?:{names})\s*[:：]?", re.IGNORECASE)
+    label_at = None
+    for _, is_heading, line in _section_lines(text, sections, LABEL_SECTION_END):
+        plain = re.sub(r"[*_`]", "", re.sub(EMOJI, " ", line))
+        mark = re.match(rf"[\s>]*((?:{BULLET}|\d+[.)]\s+)?)", plain)
+        indent, bullet = len(mark[0]) - len(mark[1]), mark[1].strip()
+        plain = re.sub(rf"^(?:\s+|>|#+|{BULLET}|\d+[.)]\s+|\[[ xX]\]\s+){{0,8}}", "", plain)
+        if not plain.strip():
+            continue
+        if label_at and (indent > label_at[0] or bullet and bullet != label_at[1]) and _is_answer(plain):
+            return CheckResult.from_rule(rule, PASS)
+        label_at = (indent, bullet) if label_only.fullmatch(plain.strip()) and not is_heading else None
+        match = start.search(plain) if is_heading else start.match(plain)  # "Notes: Overall: 60% done" is fine too
+        if match and _is_answer(match[1]):
             return CheckResult.from_rule(rule, PASS)
     place = ", ".join(" / ".join(section) for section in sections)
     return CheckResult.from_rule(
         rule, FAIL, message=f"No '{labels[0]}:' line in {place}. Add one, e.g. {labels[0]}: 60% done. Payment is left."
     )
+
+
+def _is_answer(text: str) -> bool:
+    return text.strip(" .-–—").lower() not in NO_ANSWER
 
 
 def working_hours(text: str, rule: dict) -> CheckResult:

@@ -6,7 +6,7 @@ import pytest
 
 from checker.llm_checks import PROMPT, token_cap
 from training.evaluate import run, scores
-from training.generate_examples import BREAKS, JUDGE, WRITER, StopRun, ai_rules, generate, make_prompt, problem_with, read_rows
+from training.generate_examples import BREAKS, JUDGE, WRITER, StopRun, ai_rules, generate, make_pair, make_prompt, problem_with, read_rows
 from training.prepare_dataset import prepare, split, to_examples
 
 PAIR = {
@@ -37,7 +37,7 @@ class FakeGroq:
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
 
-RULE = {"id": "concrete_tasks", "check": "llm", "question": "Is each task concrete?"}
+RULE = next(rule for rule in ai_rules() if rule["id"] == "concrete_tasks")
 
 
 def test_every_ai_rule_has_ways_to_break_it():
@@ -110,22 +110,49 @@ def test_examples_use_the_apps_prompt():
 
 
 def test_split_keeps_every_rule_in_both_parts():
-    train, val = split(make_rows(20) + make_rows(20, "real_blockers"))
-    assert len(train) == 36 and len(val) == 4
-    assert {row["rule_id"] for row in val} == {"concrete_tasks", "real_blockers"}
+    parts = split(make_rows(20) + make_rows(20, "real_blockers"))
+    assert {name: len(part) for name, part in parts.items()} == {"train": 32, "val": 4, "test": 4}
+    for part in parts.values():
+        assert {row["rule_id"] for row in part} == {"concrete_tasks", "real_blockers"}
 
 
 def test_prepare_writes_files_and_respects_rejected_pairs(tmp_path):
     rows = make_rows(10) + [{**make_rows(1)[0], "attempt": 99, "kept": False}]
     (tmp_path / "pairs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
-    assert prepare(tmp_path) == {"train": 18, "val": 2}
-    train, val = read_rows(tmp_path / "train.jsonl"), read_rows(tmp_path / "val.jsonl")
-    pair_of = lambda e: e["report_id"].rsplit("-", 1)[0]  # noqa: E731
-    assert not {pair_of(e) for e in train} & {pair_of(e) for e in val}
+    assert prepare(tmp_path) == {"train": 16, "val": 2, "test": 2}
+    pairs = [{e["report_id"].rsplit("-", 1)[0] for e in read_rows(tmp_path / f"{name}.jsonl")} for name in ("train", "val", "test")]
+    assert sum(map(len, pairs)) == len(set.union(*pairs)) == 10  # no pair is in two files
     assert len(pd.read_csv(tmp_path / "review.csv")) == 5
 
     (tmp_path / "rejected.txt").write_text("concrete_tasks-1\nconcrete_tasks-2\n", encoding="utf-8")
     assert sum(prepare(tmp_path).values()) == 16
+
+
+def test_pairs_for_an_older_question_do_not_count(tmp_path):
+    path = tmp_path / "pairs.jsonl"
+    old = [{**row, "question": "The old question?"} for row in make_rows(5)]
+    path.write_text("".join(json.dumps(r) + "\n" for r in old), encoding="utf-8")
+    assert sum(prepare(tmp_path).values()) == 0
+
+    generate([RULE], 1, FakeGroq(), path)
+    assert [row["attempt"] for row in read_rows(path)] == [1, 2, 3, 4, 5, 6]  # a new number, so an ID is never used twice
+    assert sum(prepare(tmp_path).values()) == 2
+
+
+def test_rows_with_unusual_line_separators_can_be_read(tmp_path):
+    path = tmp_path / "pairs.jsonl"
+    text = "a\u2028b\u2029c\u0085d"
+    path.write_text(json.dumps({"good": text}, ensure_ascii=False) + "\n\n", encoding="utf-8")
+    assert read_rows(path) == [{"good": text}]
+
+
+def test_an_empty_answer_is_a_dropped_pair():
+    class EmptyGroq(FakeGroq):
+        def _create(self, **_):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None))])
+
+    row = make_pair(RULE, 1, EmptyGroq())
+    assert not row["kept"] and "JSON" in row["why"]
 
 
 def test_only_models_that_think_first_have_no_answer_cap():
@@ -154,3 +181,28 @@ def test_run_stops_when_the_model_cannot_answer():
     assert run([example], JUDGE, FakeGroq()).verdict.tolist() == ["pass"]
     with pytest.raises(SystemExit):
         run([example], JUDGE, FakeGroq(good="limit"))
+
+
+def test_run_continues_after_a_stop(tmp_path):
+    partial = tmp_path / "answers.jsonl"
+    examples = [
+        {"report_id": "a", "rule_id": "r", "question": "q", "text": PAIR["good"], "label": "pass"},
+        {"report_id": "b", "rule_id": "r", "question": "q", "text": PAIR["broken"], "label": "fail"},
+    ]
+    with pytest.raises(SystemExit, match="1 answers are saved"):
+        run(examples, JUDGE, FakeGroq(broken="limit"), partial)
+    results = run(examples, JUDGE, client := FakeGroq(), partial)
+    assert results.verdict.tolist() == ["pass", "fail"] and len(client.calls) == 1
+    run(examples, "another model", client := FakeGroq(), partial)  # never reuses another model's answers
+    assert len(client.calls) == 2
+
+
+def test_run_uses_the_known_terms_as_the_app_does():
+    class TermsGroq(FakeGroq):
+        def _create(self, **_):
+            content = json.dumps({"verdict": "fail", "reason": "It uses the abbreviation 'API' without explanation.", "quote": ""})
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+    example = {"report_id": "a", "rule_id": "terms_explained", "question": "q", "text": "x", "label": "pass"}
+    assert run([example], JUDGE, TermsGroq()).verdict.tolist() == ["pass"]
+    assert run([{**example, "rule_id": "concrete_tasks"}], JUDGE, TermsGroq()).verdict.tolist() == ["fail"]

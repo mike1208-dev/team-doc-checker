@@ -178,7 +178,7 @@ def make_pair(rule: dict, attempt: int, client, writer: str = WRITER) -> dict:
             temperature=0.9,
             response_format={"type": "json_object"},
         )
-        pair = json.loads(response.choices[0].message.content)
+        pair = json.loads(response.choices[0].message.content or "")
     except (json.JSONDecodeError, BadRequestError) as e:  # Groq answers 400 when the model's JSON is broken
         if isinstance(e, BadRequestError) and "json" not in str(e).lower():
             raise StopRun(str(e)) from e
@@ -199,25 +199,34 @@ def make_pair(rule: dict, attempt: int, client, writer: str = WRITER) -> dict:
 def read_rows(path: Path) -> list[dict]:
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    # not splitlines(): it also splits on characters that can be inside a report, such as U+2028
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
+
+
+def is_current(row: dict, rule: dict) -> bool:
+    """
+    Whether a pair was made for the rule as it is now. After a change to the question, the old pairs don't count.
+    """
+    return row["rule_id"] == rule["id"] and row["question"] == rule["question"]
 
 
 def generate(rules: list[dict], pairs: int, client, path: Path = OUTPUT, writer: str = WRITER) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = read_rows(path)
     for rule in rules:
-        mine = [row for row in rows if row["rule_id"] == rule["id"]]
-        kept = sum(row["kept"] for row in mine)
-        attempt = max((row["attempt"] for row in mine), default=0)
-        while kept < pairs and attempt < pairs * 3:  # give up on a rule the models can't agree on
+        attempt = max((row["attempt"] for row in rows if row["rule_id"] == rule["id"]), default=0)
+        mine = [row for row in rows if is_current(row, rule)]
+        kept, tries = sum(row["kept"] for row in mine), len(mine)
+        while kept < pairs and tries < pairs * 3:  # give up on a rule the models can't agree on
             attempt += 1
+            tries += 1
             row = make_pair(rule, attempt, client, writer)
             with path.open("a", encoding="utf-8") as file:
                 file.write(json.dumps(row, ensure_ascii=False) + "\n")
             kept += row["kept"]
             print(f"{rule['id']}: {kept}/{pairs}" + (f" (dropped: {row['why']})" if row["why"] else ""), flush=True)
         if kept < pairs:
-            print(f"{rule['id']}: stopped at {kept}/{pairs} after {attempt} tries. Make the rule clearer.")
+            print(f"{rule['id']}: stopped at {kept}/{pairs} after {tries} tries. Make the rule clearer.")
 
 
 def ai_rules() -> list[dict]:

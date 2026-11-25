@@ -1,5 +1,5 @@
 """
-Step 2: turns the kept pairs into train.jsonl and val.jsonl, plus review.csv for checking by hand.
+Step 2: turns the kept pairs into train.jsonl, val.jsonl and test.jsonl, plus review.csv for checking by hand.
 
     python -m training.prepare_dataset
 
@@ -13,10 +13,11 @@ from pathlib import Path
 import pandas as pd
 
 from checker.llm_checks import MAX_CHARS, PROMPT
-from training.generate_examples import OUTPUT, ai_rules, read_rows
+from training.generate_examples import OUTPUT, ai_rules, is_current, read_rows
 
 FOLDER = OUTPUT.parent
-VAL_SHARE = 0.1
+VAL_SHARE = 0.1  # to choose the best version during training
+TEST_SHARE = 0.1  # for the score, so never used in training
 REVIEW_PER_RULE = 5
 
 
@@ -41,18 +42,19 @@ def to_examples(row: dict) -> list[dict]:
     ]
 
 
-def split(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+def split(rows: list[dict]) -> dict[str, list[dict]]:
     """
-    Splits by pair (both halves stay together) and by rule, so every rule is in both parts.
+    Splits by pair (both halves stay together) and by rule, so every rule is in all parts.
     """
-    train, val = [], []
+    parts = {"train": [], "val": [], "test": []}
     for rule_id in sorted({row["rule_id"] for row in rows}):
         mine = sorted((row for row in rows if row["rule_id"] == rule_id), key=lambda row: row["attempt"])
         random.Random(rule_id).shuffle(mine)
-        size = max(1, round(len(mine) * VAL_SHARE)) if len(mine) > 1 else 0
-        val += mine[:size]
-        train += mine[size:]
-    return train, val
+        val, test = (max(1, round(len(mine) * share)) if len(mine) > 2 else 0 for share in (VAL_SHARE, TEST_SHARE))
+        parts["val"] += mine[:val]
+        parts["test"] += mine[val : val + test]
+        parts["train"] += mine[val + test :]
+    return parts
 
 
 def write(path: Path, examples: list[dict]) -> None:
@@ -61,16 +63,18 @@ def write(path: Path, examples: list[dict]) -> None:
 
 def prepare(folder: Path = FOLDER) -> dict[str, int]:
     rejected_file = folder / "rejected.txt"
-    checked_by_ai = {rule["id"] for rule in ai_rules()}
+    rules = {rule["id"]: rule for rule in ai_rules()}
     rejected = set(rejected_file.read_text(encoding="utf-8").split()) if rejected_file.exists() else set()
-    rows = [
+    kept = [
         row
         for row in read_rows(folder / OUTPUT.name)
-        if row["kept"] and row["rule_id"] in checked_by_ai and f"{row['rule_id']}-{row['attempt']}" not in rejected
+        if row["kept"] and row["rule_id"] in rules and f"{row['rule_id']}-{row['attempt']}" not in rejected
     ]
-    train_rows, val_rows = split(rows)
+    rows = [row for row in kept if is_current(row, rules[row["rule_id"]])]
+    if len(rows) < len(kept):
+        print(f"Left out {len(kept) - len(rows)} pairs made for an older question. Make new ones with training.generate_examples.")
     sizes = {}
-    for name, part in (("train", train_rows), ("val", val_rows)):
+    for name, part in split(rows).items():
         examples = [example for row in part for example in to_examples(row)]
         random.Random(0).shuffle(examples)
         write(folder / f"{name}.jsonl", examples)

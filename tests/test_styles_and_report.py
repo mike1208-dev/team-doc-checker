@@ -97,6 +97,16 @@ def test_llm_rule_results(client, expected):
         ("Unexplained terms 'API' and 'IPA'.", "", FAIL),
         ("It uses an internal name without explanation.", "Update the Flux API", FAIL),  # Flux is unknown
         ("It uses an internal name without explanation.", "", FAIL),  # names nothing
+        ("The report doesn't explain the term 'API'.", "", PASS),  # an apostrophe isn't a quote mark
+        ("It uses Flux with the API without explanation.", "Flux", FAIL),
+        ("The terms 'API' and VPC are not explained.", "", FAIL),
+        ("Internal service Falcon is named in a FEAT without explanation.", "", FAIL),
+        ("Terms such as 'API' and kubelet are not explained.", "", FAIL),
+        ("It uses the term 'API' without explanation.", "Update the Flux API", FAIL),
+        ("It uses the term 'API' without explanation.", "Update the API (#42)", PASS),
+        ("It uses an internal name in the workflow without explanation.", "", FAIL),  # workflow is only part of the sentence
+        ("", "Flux", FAIL),
+        ("", "", FAIL),
     ],
 )
 def test_known_terms_are_not_a_problem(reason, quote, expected):
