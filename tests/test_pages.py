@@ -65,9 +65,9 @@ def test_check_page_runs_rule_checks(monkeypatch):
     next(b for b in at.button if b.label == "Try an example").click().run()
     next(b for b in at.button if b.label == "Check daily report").click().run()
     assert not at.exception
-    # The example has all sections and tags the reviewer, but gives no hours for Today
-    assert [m.value for m in at.metric] == ["2", "1", "0", "6"]
-    assert any("2 / 3 rules passed" in m.value for m in at.markdown)
+    # The example has all sections and tags the reviewer, but gives no hours for Today and no overall progress
+    assert [m.value for m in at.metric] == ["2", "2", "0", "5"]
+    assert any("2 / 4 rules passed" in m.value for m in at.markdown)
 
     # A new check that can't run must not leave the old result on the page
     at.text_area[0].input("").run()

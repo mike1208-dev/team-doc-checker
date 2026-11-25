@@ -23,6 +23,7 @@ Check types you can use:
 - pattern: a regular expression that must (or must not) appear. Options: "pattern", "must": "match" or "not_match", "label": what it means.
 - mention_at_top: someone must be tagged with @ in the first lines. Options: "lines" (number, default 3).
 - working_hours: these sections must give working hours. Options: "sections", same shape as required_sections.
+- labelled_line: one of these sections must have a line that starts with a label, such as "Overall: 60% done". Options: "sections", same shape as required_sections; "labels": list of accepted labels.
 - llm: a rule that needs understanding, asked as a yes/no question where "yes" means the rule is followed. Options: "question".
 
 Prefer the simple check types; use llm only when a rule needs understanding.
