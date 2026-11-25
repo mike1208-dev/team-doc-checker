@@ -54,19 +54,3 @@ def to_dataframe(results: list[CheckResult]) -> pd.DataFrame:
             for r in results
         ]
     )
-
-
-def to_markdown(results: list[CheckResult], style_name: str, document_name: str) -> str:
-    lines = [
-        f"# Check report: {document_name}",
-        "",
-        f"- **Style:** {style_name}",
-        f"- **Overall:** {summary(results)}",
-        "",
-        "| Result | Rule | Where | Why / suggested fix |",
-        "|---|---|---|---|",
-    ]
-    for r in results:
-        cells = [ICONS[r.status], r.title, r.where, r.message]
-        lines.append("| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |")
-    return "\n".join(lines) + "\n"

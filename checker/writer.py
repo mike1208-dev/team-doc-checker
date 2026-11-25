@@ -12,7 +12,7 @@ from checker import basic_checks, llm_checks, statuses
 from checker.result import PASS
 from checker.styles import Style
 
-UNUSED_RULES = {"overall_progress"}  # rules of the check page that aren't in the v2 plan
+UNUSED_RULES = {"overall_progress"}  # a v1 rule that a database may still have
 TO_FILL_IN = ("[add your tasks]", "[add your blockers, or None]", "[add the title]")
 GREETING = "Good morning. Please confirm the daily report. Thank you."
 MAX_CHARS = 8000

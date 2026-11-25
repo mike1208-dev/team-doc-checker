@@ -9,7 +9,7 @@ from streamlit.testing.v1 import AppTest
 import checker.rule_import
 import checker.store
 from checker import llm_checks, local_model
-from checker.store import StoreError, YamlStore
+from checker.store import StoreError
 from checker.styles import Style
 
 
@@ -58,58 +58,6 @@ def memory_store(monkeypatch):
     return store
 
 
-def test_check_page_runs_rule_checks(monkeypatch):
-    monkeypatch.setattr(checker.store, "get_store", lambda: YamlStore())
-    at = AppTest.from_file("../views/check.py", default_timeout=30).run()
-    at.sidebar.toggle[0].set_value(False).run()
-    next(b for b in at.button if b.label == "Try an example").click().run()
-    next(b for b in at.button if b.label == "Check daily report").click().run()
-    assert not at.exception
-    # The example has all sections and tags the reviewer, but gives no hours for Today and no overall progress
-    assert [m.value for m in at.metric] == ["2", "2", "0", "5"]
-    assert any("2 / 4 rules passed" in m.value for m in at.markdown)
-
-    # A new check that can't run must not leave the old result on the page
-    at.text_area[0].input("").run()
-    next(b for b in at.button if b.label == "Check daily report").click().run()
-    assert at.warning and not at.metric
-
-
-def test_check_page_uses_the_built_in_rules_without_a_daily_report_style(memory_store):
-    at = AppTest.from_file("../views/check.py", default_timeout=30).run()
-    assert not at.exception
-    assert any("built-in rules are used" in w.value for w in at.warning)
-    assert at.text_area
-
-
-def test_check_page_asks_an_unreachable_database_only_once(memory_store, monkeypatch):
-    calls = []
-
-    def unreachable():
-        calls.append(1)
-        raise StoreError("Can't reach Supabase")
-
-    monkeypatch.setattr(memory_store, "list_styles", unreachable)
-    at = AppTest.from_file("../views/check.py", default_timeout=30).run()
-    at.sidebar.toggle[0].set_value(False).run()
-    assert not at.exception
-    assert any("Can't reach Supabase" in w.value for w in at.warning)
-    assert len(calls) == 1
-
-
-def test_check_page_uses_the_local_model_first_when_configured(monkeypatch):
-    monkeypatch.setattr(checker.store, "get_store", lambda: YamlStore())
-    at = AppTest.from_file("../views/check.py", default_timeout=30).run()
-    options = list(at.sidebar.selectbox[0].options)
-    assert all(option.startswith("Groq") for option in options)
-
-    monkeypatch.setenv("LOCAL_MODEL_PATH", "model.gguf")
-    monkeypatch.setenv("LOCAL_MODEL_LABEL", "Test model")
-    at = AppTest.from_file("../views/check.py", default_timeout=30).run()
-    assert list(at.sidebar.selectbox[0].options) == ["Test model", *options]
-    assert at.sidebar.selectbox[0].value == local_model.MODEL_ID
-
-
 def test_manage_page_needs_the_password(memory_store):
     at = AppTest.from_file("../views/manage_rules.py", default_timeout=30).run()
     assert not at.exception
@@ -153,7 +101,7 @@ def test_manage_page_replaces_old_rules_with_the_built_in_ones(memory_store):
     at.selectbox(key="style_choice").set_value("daily_report").run()
     next(b for b in at.button if b.label == "Yes, replace them").click().run()
     assert not at.exception
-    assert len(memory_store.styles["daily_report"].rules) == 9
+    assert len(memory_store.styles["daily_report"].rules) == 8
     assert memory_store.rows[0]["name"] == "Old"
 
 
