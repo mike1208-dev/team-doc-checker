@@ -1,4 +1,4 @@
-# ZeeChecker v1 rules for daily reports
+# ZeeChecker rules for daily reports
 name: Daily report
 description: What I did yesterday, what I'll do today, and what is blocking me.
 
@@ -34,13 +34,6 @@ rules:
     title: Each finished task has a status or result
     check: llm
     question: "Does each finished task (under Yesterday or Weekend) have a status or result, such as Merged, In review, In progress, Done, a PR link or a number?"
-
-  - id: overall_progress
-    title: Says the overall progress
-    check: labelled_line
-    labels: ["Overall", "Overall progress"]
-    sections:
-      - ["Blockers", "Notes"]
 
   - id: clear_and_short
     title: Clear and short

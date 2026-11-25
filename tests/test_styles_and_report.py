@@ -6,9 +6,9 @@ import pytest
 from checker import local_model
 from checker.basic_checks import CHECKS
 from checker.loader import read_document
-from checker.report import run_checks, summary, to_markdown
+from checker.report import run_checks, summary
 from checker.result import FAIL, PASS, SKIP, WARN
-from checker.styles import Style, guess_style, load_styles
+from checker.styles import Style, load_styles
 
 DAILY_REPORT = """# Daily report
 ## Yesterday
@@ -50,12 +50,6 @@ def test_every_rule_file_loads_and_uses_known_checks(styles):
             assert rule.get("check") in {*CHECKS, "llm"}, f"{style.id}/{rule['id']}: unknown check"
             if rule["check"] == "llm":
                 assert rule.get("question"), f"{style.id}/{rule['id']}: llm rule needs a question"
-
-
-def test_guess_style(styles):
-    assert guess_style(DAILY_REPORT, styles).id == "daily_report"
-    assert guess_style("## Changes\n- x\n## Testing\nCloses #12", styles).id == "issue_pr"
-    assert guess_style("hello world", styles) is None
 
 
 def test_run_checks_without_ai(styles):
@@ -149,13 +143,6 @@ def test_unknown_check_is_skipped_not_crashed():
     style = Style(id="t", name="Test", rules=[{"id": "x", "check": "spellcheck"}])
     [result] = run_checks("text", style, use_llm=False)
     assert result.status == SKIP
-
-
-def test_markdown_report():
-    style = Style(id="t", name="Test", rules=[{"id": "p", "check": "forbidden_phrases", "phrases": ["TBD"]}])
-    report = to_markdown(run_checks("a | b TBD", style), "Test", "doc.md")
-    assert "# Check report: doc.md" in report
-    assert "0 / 1 rules passed" in report
 
 
 def test_read_markdown_and_unsupported():

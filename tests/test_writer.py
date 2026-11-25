@@ -8,6 +8,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import checker.store
+import views.shared
 from checker import llm_checks
 from checker.report import run_checks
 from checker.store import YamlStore
@@ -606,7 +607,8 @@ def test_the_report_follows_three_code_rules_and_five_ai_rules():
     style = team_rules()
     kinds = [rule["check"] == "llm" for rule in style.rules]
     assert kinds.count(False) == 3 and kinds.count(True) == 5
-    assert "overall_progress" in {rule["id"] for rule in load_styles()["daily_report"].rules}  # the check page keeps it
+    v1 = replace(style, rules=[*style.rules, {"id": "overall_progress", "check": "labelled_line"}])
+    assert team_rules(v1) == style  # a database may still have this rule
 
     old = Style(id="daily_report", name="Daily report", rules=[{"id": "has_sections", "title": "Has Done", "check": "required_sections", "sections": ["Done"]}])
     assert team_rules(old) == style  # the old example rules of a database
@@ -731,6 +733,37 @@ def test_the_page_is_locked_while_the_ai_writes(monkeypatch):
     at.run()
     assert not at.button(key="write").disabled and at.text_input(key="reviewer").value == "Sam"
     assert any("limit is reached" in e.value for e in at.error)
+
+
+def test_the_rules_when_the_database_does_not_help(monkeypatch):
+    calls = []
+
+    class Store(YamlStore):
+        def list_styles(self):
+            calls.append(1)
+            raise checker.store.StoreError("Can't reach Supabase")
+
+    def warnings(store):
+        views.shared.clear_styles_cache()
+        monkeypatch.setattr(checker.store, "get_store", lambda: store)
+        monkeypatch.setattr(llm_checks, "default_client", lambda model: WriterAndChecker())
+        at = AppTest.from_file("../views/write.py", default_timeout=30).run()
+        at.text_area(key="notes").input(NOTES)
+        at.text_input(key="reviewer").input("Sam").run()
+        at.button(key="write").click().run()
+        at.run()
+        assert not at.exception and at.text_area(key="report_text") and any("8 of 8 rules" in e.label for e in at.expander)
+        return [w.value for w in at.warning]
+
+    assert any("Can't reach Supabase" in w for w in warnings(Store()))
+    assert len(calls) == 1  # asked only once
+
+    class Empty(YamlStore):
+        def list_styles(self):
+            return {}
+
+    assert any("built-in rules are used" in w for w in warnings(Empty()))
+    views.shared.clear_styles_cache()
 
 
 def test_the_write_page_opens_without_the_database(monkeypatch):

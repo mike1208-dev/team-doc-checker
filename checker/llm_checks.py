@@ -24,7 +24,6 @@ MAX_CHARS = 8000  # models lose track of very long input
 MAX_ANSWER_TOKENS = 300  # without a cap, Groq reserves more than some models' limit per minute
 
 # The document comes before the rule, so the local model reads it once and reuses it for the next rules.
-# The local model is trained on this exact prompt: after a change, rebuild the dataset and train again.
 PROMPT = """You are reviewing a team document against ONE rule.
 
 Document:

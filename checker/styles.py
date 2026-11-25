@@ -56,17 +56,3 @@ def load_styles(rules_dir: Path = RULES_DIR) -> dict[str, Style]:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         styles[path.stem] = Style.from_dict({**data, "id": path.stem})
     return styles
-
-
-def guess_style(text: str, styles: dict[str, Style]) -> Style | None:
-    """
-    Picks the style whose `detect` keywords appear most often in the text.
-    Returns None if no keyword matches, so the user has to choose.
-    """
-    lowered = text.lower()
-    best, best_score = None, 0
-    for style in styles.values():
-        score = sum(1 for keyword in style.detect if keyword.lower() in lowered)
-        if score > best_score:
-            best, best_score = style, score
-    return best
