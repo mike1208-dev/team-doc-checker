@@ -6,6 +6,7 @@ Groq's cloud API (free tier, needs GROQ_API_KEY) or a small model inside the app
 import json
 import os
 import re
+from functools import lru_cache
 
 from checker import local_model
 from checker.result import FAIL, PASS, SKIP, WARN, CheckResult
@@ -37,6 +38,7 @@ Answer only with JSON in exactly this format:
 {{"verdict": "pass" | "fail" | "unsure", "reason": "one short sentence", "quote": "the exact text that breaks the rule, or an empty string"}}"""
 
 VERDICTS = {"pass": PASS, "fail": FAIL}
+BROKEN_ANSWER = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 QUOTED_TERM = re.compile(r"(?<!\w)['‘\"“]([^'’\"”]+)['’\"”](?!\w)")  # not the apostrophe in "doesn't"
 # The other words an AI uses in its reason. Any word that isn't here, known or quoted may be an unknown term, so the fail stays
 PLAIN_WORDS = set(
@@ -47,12 +49,30 @@ PLAIN_WORDS = set(
     use used uses using was were which with without word words""".split()
 )
 
+# The words of a quoted task that can't be terms. A quote with any other unknown word keeps the fail
+QUOTE_WORDS = PLAIN_WORDS | set(
+    """add added after all asked at back before between by change changed changes check checked complete completed connect create created
+    data day days done each file files finish finished first fix fixed from get got how improve improved into is it last list make made
+    more move moved need needs next now old on only open opened out over part plan planned prepare prepared remove removed run send sent
+    set share shared show start started still study studied through to today tomorrow two up update updated updates user users via wait
+    waiting when while will work worked working write wrote yesterday""".split()
+)
+
+
+@lru_cache
+def _known_terms(terms: tuple) -> tuple[frozenset[str], list[str]]:
+    """
+    The terms in lowercase, and the ones with more than one word (the longest first).
+    """
+    known = frozenset(str(term).lower() for term in terms)
+    return known, sorted((term for term in known if " " in term), key=len, reverse=True)
+
 
 def only_known_terms(known: list[str], reason: str, quote: str) -> bool:
     """
     Whether every term the AI complains about is a known one. If that isn't clear it's False, so the fail stays.
     """
-    known = {term.lower() for term in known}
+    known, phrases = _known_terms(tuple(known))
 
     def is_known(text: str) -> bool:
         text = text.lower()
@@ -69,7 +89,7 @@ def only_known_terms(known: list[str], reason: str, quote: str) -> bool:
     if not all(is_known(term) for term in named):
         return False
     rest = QUOTED_TERM.sub(" ", reason)
-    for phrase in sorted((term for term in known if " " in term), key=len, reverse=True):
+    for phrase in phrases:
         rest, count = re.subn(rf"(?<!\w){re.escape(phrase)}(?!\w)", " ", rest, flags=re.IGNORECASE)
         named += [phrase] * count
     for word in words(rest):
@@ -82,9 +102,7 @@ def only_known_terms(known: list[str], reason: str, quote: str) -> bool:
     in_quote = words(quote)
     if not named:
         return bool(in_quote) and all(is_known(word) for word in in_quote)
-    if len(in_quote) > 1 and in_quote[0].istitle():  # only the start of a sentence
-        in_quote = in_quote[1:]
-    return all(word == word.lower() or is_known(word) for word in in_quote)
+    return all(is_known(word) or word.lower() in QUOTE_WORDS for word in in_quote)
 
 
 def default_client(model: str = DEFAULT_MODEL):
@@ -123,7 +141,8 @@ def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) ->
         return CheckResult.from_rule(rule, SKIP, message=f"AI check skipped: {e}")
 
     try:
-        answer = json.loads(content or "", strict=False)  # the local model may put a line break inside a quote
+        # The local model may put a line break inside a quote. Other control characters mean a broken answer
+        answer = None if BROKEN_ANSWER.search(content or "") else json.loads(content or "", strict=False)
     except json.JSONDecodeError:
         answer = None
     if not isinstance(answer, dict):

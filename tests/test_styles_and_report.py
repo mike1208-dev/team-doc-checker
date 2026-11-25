@@ -73,6 +73,7 @@ def test_run_checks_without_ai(styles):
         (FakeClient(json.dumps({"verdict": "fail", "reason": "vague", "quote": "worked on stuff"})), FAIL),
         (FakeClient(json.dumps({"verdict": "unsure", "reason": "?", "quote": ""})), WARN),
         (FakeClient('{"verdict": "fail", "reason": "x", "quote": "two\nlines"}'), FAIL),  # a line break in a quote
+        (FakeClient('{"verdict": "pass", "reason": "a\x01b", "quote": ""}'), WARN),  # other control characters
         (FakeClient("not json"), WARN),
         (FakeClient("[]"), WARN),
         (FakeClient("null"), WARN),
@@ -105,6 +106,10 @@ def test_llm_rule_results(client, expected):
         ("It uses the term 'API' without explanation.", "Update the Flux API", FAIL),
         ("It uses the term 'API' without explanation.", "Update the API (#42)", PASS),
         ("It uses an internal name in the workflow without explanation.", "", FAIL),  # workflow is only part of the sentence
+        ("It uses the term 'API' without explanation.", "Update the kubelet config via the API", FAIL),
+        ("The report uses API without explaining the new term.", "Update the kubelet config via the API", FAIL),
+        ("It uses the term 'API' without explanation.", "Flux API update", FAIL),
+        ("It uses the term 'API' without explanation.", "- Fixed the API and updated the workflow", PASS),
         ("", "Flux", FAIL),
         ("", "", FAIL),
     ],
@@ -114,6 +119,13 @@ def test_known_terms_are_not_a_problem(reason, quote, expected):
     client = FakeClient(json.dumps({"verdict": "fail", "reason": reason, "quote": quote}))
     [result] = run_checks("Some text.", Style(id="t", name="Test", rules=[rule]), client=client)
     assert result.status == expected
+
+
+def test_known_terms_can_be_numbers():
+    rule = {"id": "terms", "check": "llm", "question": "Explained?", "known_terms": [404, "API"]}
+    client = FakeClient(json.dumps({"verdict": "fail", "reason": "It uses the term 'API' without explanation.", "quote": ""}))
+    [result] = run_checks("Some text.", Style(id="t", name="Test", rules=[rule]), client=client)
+    assert result.status == PASS
 
 
 def test_a_fail_is_kept_without_known_terms():

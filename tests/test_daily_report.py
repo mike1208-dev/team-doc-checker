@@ -129,6 +129,10 @@ def test_hours_in_task_lines(line, expected):
         ("Blockers\n- Overall:\n  - None", FAIL),
         ("Blockers\n- Overall:\n- Waiting for the review", FAIL),
         ("Blockers\nOverall:\nThank you.", FAIL),
+        ("## Blockers\n- Overall:\n* Something unrelated", FAIL),
+        ("🚧 Blockers\n◦ Overall:\n• Something unrelated", FAIL),
+        ("*Blockers*\n- None\n*Notes*\n- None\n*Issues*\n- Overall: 60% done", FAIL),
+        ("Blockers\n- None\nQuestions:\n- Overall: 60% done", FAIL),
         ("## Blockers\n- Overall:\n## Today\n- 60% done", FAIL),
         ("Blockers\n- None", FAIL),
         ("Blockers\n- None\n- Overall: TBD", FAIL),
@@ -139,6 +143,12 @@ def test_hours_in_task_lines(line, expected):
 )
 def test_overall_line_in_the_blockers_section(notes, expected):
     assert labelled_line(f"Yesterday (7h)\n- a\nToday (7h)\n- b\n{notes}", RULES["overall_progress"]).status == expected
+
+
+@pytest.mark.parametrize("labels", [{}, {"labels": []}, {"labels": None}, {"labels": [" "]}])
+def test_a_labelled_line_rule_without_labels_is_skipped(labels):
+    rule = {"id": "x", "check": "labelled_line", "sections": [["Blockers"]], **labels}
+    assert labelled_line("Blockers\n- None\n: x", rule).status == SKIP
 
 
 def test_overall_line_outside_the_blockers_section():
