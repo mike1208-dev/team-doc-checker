@@ -1,7 +1,10 @@
+import ast
 import json
+from pathlib import Path
 
 import pytest
 
+import training.score_notes
 from training.make_notes import DETAILS, SPLITS, SUBJECTS, Maker, make, part, problem_with, to_chat
 from training.score_notes import compare, draft_of, read, run, score
 
@@ -137,3 +140,11 @@ def test_run_continues_after_a_stop(tmp_path):
     assert "You sort an engineer's plain notes" in prompts[0] and "You sort" not in prompts[2] and NOTES in prompts[0] and NOTES in prompts[2]
     scores = score(examples, rows)
     assert scores["notes"] == 2 and scores["right fields %"] == scores["tasks found %"] == 100 and scores["reports with a wrong fact and no warning"] == 0
+
+
+def test_the_notebook_has_valid_code_and_uses_functions_that_exist():
+    notebook = json.loads((Path(__file__).parent.parent / "training" / "notes_lora.ipynb").read_text(encoding="utf-8"))
+    lines = [line for cell in notebook["cells"] if cell["cell_type"] == "code" for line in "".join(cell["source"]).splitlines()]
+    plain = "\n".join(line.replace(line.strip(), "pass") if line.strip().startswith(("!", "%")) else line for line in lines)
+    names = {alias.name for node in ast.walk(ast.parse(plain)) if isinstance(node, ast.ImportFrom) and node.module == "training.score_notes" for alias in node.names}
+    assert names and all(hasattr(training.score_notes, name) for name in names)
