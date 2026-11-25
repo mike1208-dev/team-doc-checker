@@ -35,6 +35,24 @@ from checker.statuses import by_number, check
         ("notifcation badge issue-701 pr-709 mergd", "709", "Merged", "ok"),
         ("issue-1210、PR-1218はマージ済み。", "1218", "Merged", "ok"),
         ("PR-1218はまだマージされていない。", "1218", "Merged", ""),
+        # several numbers
+        ("PR 101 login in review, 102 merged", "101", "Merged", ""),
+        ("PR 101 login in review, 102 merged", "102", "Merged", "ok"),
+        ("PR 101, 102 and 103 merged", "101", "Merged", "ok"),
+        ("PR 101, 102 and 103 merged", "103", "Merged", "ok"),
+        ("PR 101 and 102 merged, PR 103 in review", "101", "Merged", "ok"),
+        ("PR 101 and 102 merged, PR 103 in review", "103", "Merged", ""),
+        ("PR 12 in review, 10 tests passed", "12", "In review", "ok"),
+        # a later step isn't a contradiction
+        ("issue 95 fix booking date, pr 102 merged but not deployed yet", "102", "Merged", "ok"),
+        ("fixed the date, pr 102 merged, not verified yet", "102", "Merged", "ok"),
+        ("pr 102 merged but not finished", "102", "Merged", "ok"),
+        # about all tests, not about the PRs
+        ("PR 101 login page fix\nAll unit tests passed", "101", "Done", ""),
+        ("PR 101 login page fix\nall the tests passed", "101", "Done", ""),
+        ("PR 101 login page fix\nall three are merged", "101", "Merged", "ok"),
+        ("PR 101 menu, PR 102 cart\nboth of them in review", "102", "In review", "ok"),
+        ("PR 101 login page completely broken", "101", "Done", ""),
         # nothing about it
         ("worked on pr 9", "9", "Merged", ""),
     ],

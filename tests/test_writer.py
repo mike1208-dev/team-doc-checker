@@ -13,7 +13,7 @@ from checker.report import run_checks
 from checker.store import YamlStore
 from checker.styles import Style, load_styles
 from checker.writer import (
-    MAX_CHARS, Settings, WriterError, day_hours, extract, long_date, render, rules_for_report, settings_questions, unknown_terms,
+    MAX_CHARS, NO_BLOCKERS, Settings, WriterError, _in_notes, _tasks, day_hours, extract, long_date, render, rules_for_report, settings_questions, unknown_terms,
 )
 
 NOTES = """yesterday fixed the date bug on booking list, pr 102 merged. reset form pr 101 still in review, 7h total.
@@ -343,6 +343,96 @@ def test_japanese_lines_that_are_not_translated_are_asked_about():
     assert not asked(write("checked the title with Japanese 見積もり in the report preview, done", done=[{"task": "Checked the title"}]), "translation")
 
 
+@pytest.mark.parametrize(
+    "notes, ref, expected",
+    [
+        ("fixed the login page, done, 7 hours\ntoday: export page 3 hours", "PR #7", False),
+        ("Nov 23 fixed 12 bugs, 50% done, seven tests", "PR #23", False),
+        ("Nov 23 fixed 12 bugs, 50% done, seven tests", "PR #12", False),
+        ("Nov 23 fixed 12 bugs, 50% done, seven tests", "PR #7", False),
+        ("1. menu\n2. cart", "issue 2", False),
+        ("see https://github.com/a/b/pull/102", "https://github.com/a/b/pull/10", False),
+        ("see https://github.com/a/b/pull/102.", "https://github.com/a/b/pull/102", True),
+        ("see https://github.com/a/b/pull/102/", "https://github.com/a/b/pull/102", True),
+        ("PR 101 login in review, 102 merged", "PR #102", True),
+        ("prs 101, 102 and 103 merged", "PR #103", True),
+        ("menu (#12) done", "PR #12", True),
+        ("12 fix login page is slow", "issue-12", True),
+        ("1680 new order form", "issue-1680", True),
+        ("PR 12 merged, 10 tests passed", "PR #10", False),
+    ],
+)
+def test_only_refs_that_the_notes_name_are_kept(notes, ref, expected):
+    assert _in_notes(ref, notes) == expected
+
+
+def test_an_invented_issue_is_removed():
+    notes = "fixed the login page, done, 7 hours\ntoday: export page 3 hours"
+    draft = write(notes, done=[{"issue": "7", "task": "Fixed the login page", "refs": [{"ref": "PR #3", "status": "Done"}]}], plans=[{"task": "Export page"}])
+    assert draft.done[0].issue == "" and draft.done[0].refs == [] and asked(draft, "issue-7") and asked(draft, "PR #3")
+
+
+@pytest.mark.parametrize(
+    "notes, expected",
+    [
+        ("fixed crash when there is no internet, done\ntoday: work on export", False),
+        ("nothing changed on the page, without tests", False),
+        ("there are blockers: none of the PRs is reviewed", True),  # ambiguous, but it is about blockers
+        ("no blockers", True),
+        ("No current blocker.", True),
+        ("blockers: none", True),
+        ("blocker - n/a", True),
+        ("nothing is blocking me", True),
+        ("nothing else blocking me", True),
+        ("not blocked anymore", True),
+        ("ブロッカーなし", True),
+    ],
+)
+def test_no_blockers_needs_to_be_in_the_notes(notes, expected):
+    assert bool(NO_BLOCKERS.search(notes)) == expected
+
+
+@pytest.mark.parametrize(
+    "task, done, expected",
+    [
+        ("Login page is not done", True, "Login page is not done"),
+        ("Login page isn't done", True, "Login page isn't done"),
+        ("Login page is not yet merged", True, "Login page is not yet merged"),
+        ("Login page is done", True, "Login page"),
+        ("Login page, merged", True, "Login page"),
+        ("Dark mode still in review", True, "Dark mode"),
+        ("Get PR 12 merged", False, "Get PR 12 merged"),
+        ("Get the booking page done", False, "Get the booking page done"),
+        ("Fixed crash from issue-5", True, "Fixed crash from issue-5"),
+        ("Fixed crash from issue-5 on the cart", True, "Fixed crash from issue-5 on the cart"),
+        ("Fixed issue-5 by a new setting", True, "Fixed by a new setting"),
+        ("issue-5: Menu", True, "Menu"),
+        ("Fixed unread badge issue 5", True, "Fixed unread badge"),
+        ("Started the menu issue 5, only UI", True, "Started the menu, only UI"),
+        ("Reopened issue-5", True, "Reopened issue-5"),
+        ("Menu (issue 5)", True, "Menu"),
+        ("Work on issue-5 menu", False, "Work on menu"),
+    ],
+)
+def test_titles_keep_their_meaning(task, done, expected):
+    assert _tasks([{"issue": "5", "task": task}], done=done)[0].task == expected
+
+
+def test_the_reviewers_name_does_not_hide_lost_work():
+    notes = "Reviewer Sam\nyesterday fixed the login page, done\npaired with Sam on the booking export tests\nAlso wrote the menu documentation"
+    done = [{"task": "Fixed the login page", "status": "Done"}]
+    assert asked(write(notes, done=done, plans=[], reviewer="Sam"), "paired with Sam on the booking export tests")
+    assert asked(write(notes, done=done, plans=[], reviewer="Al"), "Also wrote the menu documentation")
+    assert not asked(write("@Sam please check this, report date Nov 24\nyesterday fixed the login page, done", done=done, plans=[]), "may be missing")
+
+
+def test_short_words_are_not_copies():
+    draft = write("today fix UI bug\nblocker: no VPN key", done=[], plans=[{"task": "Fix UI bug"}], blockers=["No VPN key"], no_blockers=False)
+    assert [item.task for item in draft.plans] == ["Fix UI bug"]
+    draft = write("CRM: fixed the login page, done", done=[{"project": "CRM", "task": "Fixed the login page"}], plans=[])
+    assert draft.done[0].task == "Fixed the login page (CRM)"
+
+
 def test_a_result_is_not_a_purpose():
     draft = write("sync with Lina, agreed to use server checks", done=[{"task": "Sync with Lina", "purpose": "Agreed to use server checks"}])
     assert draft.done[0].task == "Sync with Lina (Agreed to use server checks)" and not draft.done[0].purpose
@@ -652,6 +742,53 @@ def test_the_write_page_opens_without_the_database(monkeypatch):
     assert not at.exception and at.text_area(key="notes")
 
 
+def test_the_report_date(monkeypatch):
+    monkeypatch.setattr(checker.store, "get_store", lambda: YamlStore())
+    monkeypatch.setattr(llm_checks, "default_client", lambda model: WriterAndChecker())
+    at = AppTest.from_file("../views/write.py", default_timeout=30).run()
+    assert at.session_state.day == at.session_state.default_day
+
+    # A new day changes the date, but not a chosen one or the one of a written report
+    at.session_state.default_day = at.session_state.day = date(2026, 1, 1)
+    at.run()
+    today = at.session_state.day
+    assert today > date(2026, 1, 1)
+    at.date_input(key="day").set_value(date(2026, 1, 5)).run()
+    assert at.run().session_state.day == date(2026, 1, 5)
+
+    at.text_area(key="notes").input(NOTES)
+    at.text_input(key="reviewer").input("Sam").run()
+    at.button(key="write").click().run()
+    assert "January 5th" in at.text_area(key="report_text").value
+    assert not any("sort the tasks" in m.value for m in at.markdown)
+    at.date_input(key="day").set_value(date(2026, 1, 6)).run()
+    assert "January 6th" in at.text_area(key="report_text").value and any("sort the tasks" in m.value for m in at.markdown)
+    at.session_state.default_day = date(2026, 1, 6)  # as after midnight
+    assert at.run().session_state.day == date(2026, 1, 6)
+
+
+def test_settings_stay_after_another_page():
+    def app():
+        import runpy
+
+        import streamlit as st
+
+        if not st.session_state.get("another_page"):
+            runpy.run_path("views/write.py")
+
+    at = AppTest.from_function(app, default_timeout=30).run()
+    at.date_input(key="day").set_value(date(2026, 1, 5))
+    at.number_input(key="done_hours").set_value(6.5)
+    at.number_input(key="plan_hours").set_value(None).run()
+    at.session_state.another_page = True
+    at.run()
+    assert not at.number_input
+    at.session_state.another_page = False
+    at.run()
+    assert at.date_input(key="day").value == date(2026, 1, 5)
+    assert at.number_input(key="done_hours").value == 6.5 and at.number_input(key="plan_hours").value is None
+
+
 def test_each_point_is_shown_once():
     from checker.result import CheckResult
     from views.points import points_to_check
@@ -664,3 +801,5 @@ def test_each_point_is_shown_once():
     assert points_to_check(questions, [result("status_or_result", "PASS")], edited=False) == questions
     assert points_to_check(questions, [result("status_or_result", "PASS")], edited=True) == ["Something else"]
     assert points_to_check([], [result("clear_and_short", "FAIL", "Too long"), result("x", "SKIP", "AI checks are turned off.")], edited=True) == ["Rule: Too long"]
+    reason = "AI check skipped: The AI service's limit is reached."
+    assert points_to_check([], [result("a", "SKIP", reason), result("b", "SKIP", reason)], edited=False) == [f"2 rules not checked. {reason}"]

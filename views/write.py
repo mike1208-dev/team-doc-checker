@@ -86,6 +86,8 @@ def show_check(written: dict, text: str, model: str, settings: Settings):
         results = [checked.get(result.rule_id, result) if result.message == AI_OFF else result for result in results]
 
     questions = settings_questions(written["draft"], settings) + written["draft"].questions
+    if written["days"] != (settings.day, settings.first_section):
+        questions.insert(0, "The date or the first section changed. Click Write daily report again to sort the tasks for the new day.")
     if terms := unknown_terms(written["draft"], [term for rule in style.rules for term in rule.get("known_terms") or []]):
         questions.append("A reader who isn't technical may not know: " + ", ".join(terms))
     points = points_to_check(questions, results, edited=text != written["report"])
@@ -138,19 +140,37 @@ def show_problem(key: str):
         st.html(f'<p class="zc-error">{escape(message)}</p>')
 
 
+def restore(key: str, default):
+    """
+    For fields whose first value is set by code: Streamlit's own persist_state would be overwritten by it.
+    """
+    if key not in st.session_state:
+        st.session_state[key] = st.session_state.get("kept", {}).get(key, default)
+
+
+def keep(key: str, value):
+    st.session_state.setdefault("kept", {})[key] = value
+    return value
+
+
 def settings_panel(locked: bool) -> tuple[Settings, str]:
     common = {"disabled": locked, "persist_state": "session"}
     with st.container(border=True, key="settings"):
         card_title("Settings", "These values go straight into the report. The AI never changes them.")
         reviewer = st.text_input("Reviewer name", key="reviewer", placeholder="e.g. Sam", **common)
         show_problem("reviewer")
-        day = st.date_input("Report date", value=datetime.now(JST).date(), disabled=locked)
+        today, state = datetime.now(JST).date(), st.session_state
+        restore("day", today)
+        if state.day == state.get("default_day", today) and not state.get("written"):
+            state.day = state.default_day = today  # a chosen date and the date of a written report stay after midnight
+        day = keep("day", st.date_input("Report date", key="day", disabled=locked))
         first_section = st.selectbox("First section", ["Yesterday", "Weekend"], key="first_section", **common)
         hours = []
         for column, name, key in zip(st.columns(2, wrap=False), (first_section, "Today"), ("done_hours", "plan_hours")):
-            st.session_state.setdefault(key, 7.0)  # not "value", because a field with a value can't be emptied
+            restore(key, 7.0)  # not "value", because a field with a value can't be emptied
             with column:
-                hours.append(st.number_input(f"{name} :small[(hours)]", 0.0, 24.0, value=None, step=0.5, format="%g", key=key, **common))
+                label = f"{name} :small[(hours)]"
+                hours.append(keep(key, st.number_input(label, 0.0, 24.0, value=None, step=0.5, format="%g", key=key, disabled=locked)))
                 show_problem(key)
         repo = st.text_input("GitHub repo link :small[(optional)]", key="repo", placeholder="https://github.com/acme/app", **common)
         show_problem("repo")
@@ -169,7 +189,8 @@ def write_report(notes: str, model: str, settings: Settings):
     try:
         with st.spinner("Writing your daily report..."):
             st.html(REPORT_SKELETON)
-            st.session_state["written"] = {"draft": extract(notes, model=model, day=settings.day, first_section=settings.first_section)}
+            draft = extract(notes, model=model, day=settings.day, first_section=settings.first_section)
+            st.session_state["written"] = {"draft": draft, "days": (settings.day, settings.first_section)}
         use_report(render(st.session_state["written"]["draft"], settings))
         ask_for("check_ai")
     except WriterError as e:

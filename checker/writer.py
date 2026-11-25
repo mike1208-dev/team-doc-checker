@@ -109,7 +109,37 @@ def _texts(value) -> list[str]:
     return [text for text in map(_text, value) if text] if isinstance(value, list) else []
 
 
-def _tasks(value) -> list[Task]:
+PREPOSITIONS = set("on in for of with at to by from via per see into about after before under against and or like".split())
+
+
+def _without_status(task: str) -> str:
+    """
+    Without the status at the end, which has its own place. "Login page is not done" stays.
+    """
+    match = re.fullmatch(r"(?i)(.*?)(?:\s*[,–―-]\s*|\s+)(?:(?:is|was|are|were|still)\s+)*(?:done|merged|in review)\W*", task)
+    if not match or re.search(r"(?i)(?:\b(?:not|never|no|almost|nearly|half|be|get|got|getting|to)|n['’]t)(?:\s+\w+)?$", match[1]):
+        return task
+    return match[1]
+
+
+def _without_number(task: str, issue: str) -> str:
+    """
+    Without the issue number, which has its own place. "Fixed the crash from issue-5" stays.
+    """
+    number = rf"issue[\s-]*#?{issue}\b"
+    task = re.sub(rf"(?i)\s*\(\s*{number}\s*\)|^{number}[\s:,―-]*|\s*[,―-]\s*{number}$", "", task)
+
+    def rest(match):
+        before = match[1].split()
+        if not match[2]:  # at the end, or before a comma
+            return match[1] if len(before) > 1 and before[-1].lower() not in PREPOSITIONS else match[0]
+        is_work_on = re.search(r"(?i)\bwork(?:ed|ing)? on$", match[1])
+        return match[1] + " " if is_work_on or before[-1].lower() not in PREPOSITIONS else match[0]
+
+    return re.sub(rf"(?i)^(.*\w)\s+{number}(?:(\s+)(?=\w)|(?=\s*(?:,|$)))", rest, task)
+
+
+def _tasks(value, done: bool) -> list[Task]:
     tasks = []
     for item in value if isinstance(value, list) else []:
         if isinstance(item, str):
@@ -131,11 +161,10 @@ def _tasks(value) -> list[Task]:
             _text(item.get("label")).strip("[]").upper(),
             {ref: status for ref, status in refs.items() if status},
         )
-        task.task = re.sub(r"(?i)[\s,-]+(?:is |was )?(?:done|merged|in review)\W*$", "", task.task)  # the status has its own place
-        if task.issue:  # the number has its own place too
-            title = " ".join(re.sub(rf"(?i)\bissue[\s-]*#?{task.issue}\b", "", task.task).split())
-            if not re.search(r"(?i)\b(?:on|in|for|of|with|at|to|by)$", title):  # "Address comments on issue-5" stays
-                task.task = title
+        if done:
+            task.task = _without_status(task.task)
+        if task.issue:
+            task.task = _without_number(task.task, task.issue)
         task.task = re.sub(r"(?i)^merged (?:pr|pull request)[\s-]*#?\d+,\s*(?=\w)", "", task.task)
         task.task = task.task.replace(" ,", ",")
         # a title that only repeats the number, the label or a word such as "fix" says nothing
@@ -200,17 +229,15 @@ def extract(notes: str, model: str = llm_checks.DEFAULT_MODEL, client=None, day:
     except WriterError:
         raise
     except Exception as e:  # no API key, rate limit, model retired, ...
-        print(f"Writer: {type(e).__name__}: {e}", flush=True)  # for the log only: the message can have account details
-        if getattr(e, "status_code", None) == 429 and "per day" in str(e):
-            raise WriterError("Today's free limit of this AI model is used up. Choose another model in Settings, or try later.") from e
-        if getattr(e, "status_code", None) == 429:
-            raise WriterError("The AI service's limit is reached. Wait a minute and try again, or choose another model.") from e
+        if getattr(e, "status_code", None) is not None:
+            raise WriterError(llm_checks.error_text(e)) from e
+        print(f"Writer: {type(e).__name__}: {e}", flush=True)  # for the log only
         raise WriterError(f"The AI service didn't answer ({type(e).__name__}). Try again, or choose another model.") from e
     if not isinstance(data, dict):
         raise WriterError("The AI gave an unreadable answer. Try again, or choose another model.")
     draft = Draft(
-        done=_tasks(data.get("done")),
-        plans=_tasks(data.get("plans")),
+        done=_tasks(data.get("done"), done=True),
+        plans=_tasks(data.get("plans"), done=False),
         blockers=_texts(data.get("blockers")),
         no_blockers=data.get("no_blockers") is True,
         others=_texts(data.get("others")),
@@ -236,6 +263,11 @@ SMALL_WORDS = set(
 # Verbs that only say that there was work, and verbs whose past form begins differently
 PLAIN_VERBS = {"work", "worked", "continue", "continued", "do", "did", "add", "added", "make", "made", "check", "checked", "wait", "waiting", "get", "need"}
 IRREGULAR = {"wrote": "writ", "ran": "run", "met": "meet", "sent": "send", "built": "build", "found": "find", "took": "take", "gave": "give", "taught": "teach"}
+NO_BLOCKERS = re.compile(
+    r"(?i)\b(?:no|without|zero|not any|any)\s+(?:\w+\s+){0,2}?block\w*|\bblock\w*\W{0,4}(?:today\W{0,4})?(?:none|no|nothing|n/a|nil|na)\b"
+    r"|\b(?:nothing|none|no one|not|nobody)\s+(?:(?:else|is|are|currently|really)\s+)*block\w*|ブロッカー\W?(?:は|も)?\W?(?:なし|無し|ない|ありません)"
+)
+SETTINGS_WORDS = set("please check confirm review reviewer reviewers report date daily today tagged".split())
 # An order or a remark about the report, not a point of it
 REMARK = re.compile(
     r"(?i)^\W*(?:please )?(?:don['’]?t|do not)\s+(?:mark|include|add|write|show|put|list|mention|count)\b|\bthe settings show\b|\bsettings show\b|^report date\b"
@@ -255,10 +287,26 @@ def _share(text: str, other: str) -> float:
     return len(statuses.same_words(text, other) - SMALL_WORDS) / len(own) if own else 1
 
 
+def _covered(text: str, other: str) -> float:
+    """
+    Like _share, but the short words count too, so "Fix UI bug" isn't a copy of "No VPN key".
+    """
+    own, others = ({word[:4] for word in re.findall(r"\w+", part.lower())} - {"the", "a", "an", "for", "of", "to"} for part in (text, other))
+    return len(own & others) / len(own) if own else 0
+
+
+def _urls(text: str) -> set[str]:
+    return {url.rstrip(".,;:!?/") for url in re.findall(r"https?://[^\s<>()\"]+", text)}
+
+
 def _in_notes(ref: str, notes: str) -> bool:
+    """
+    Whether the notes name this PR, issue or link. "7 hours" doesn't name PR 7.
+    """
     if "://" in ref:
-        return ref in notes
-    return bool(_numbers(ref)) and _numbers(ref) <= _numbers(notes)
+        return ref.rstrip(".,;:!?/") in _urls(notes)
+    numbers = set(re.findall(r"\d+", ref))
+    return bool(numbers) and numbers <= {item.number for item in statuses.mentions(notes)}
 
 
 def _has_verb(task: str, notes: str) -> bool:
@@ -297,8 +345,8 @@ def _kinds(notes: str) -> dict[str, set[str]]:
     Whether the notes call a number a PR, an issue, or both.
     """
     kinds: dict[str, set[str]] = {}
-    for match in re.finditer(r"(?i)(\bprs?|\bpull requests?|/pull/)[\s-]*#?(\d+)|(\bissues?|\btickets?|/issues/)[\s-]*#?(\d+)", notes):
-        kinds.setdefault(match[2] or match[4], set()).add("pr" if match[1] else "issue")
+    for item in statuses.mentions(notes):
+        kinds.setdefault(item.number, set()).update({item.kind} - {""})
     return kinds
 
 
@@ -358,7 +406,7 @@ def check_facts(draft: Draft, notes: str, day: date, first_section: str = "Yeste
         item
         for item in draft.plans
         if not re.match(r"(?i)\W*blockers?\W*(?:none|no)?\W*$", item.task)
-        and not any(item.task and _share(item.task, text) > 0.9 and _share(text, item.task) > 0.9 for text in draft.blockers)
+        and not any(_covered(item.task, text) > 0.8 and _covered(text, item.task) > 0.8 for text in draft.blockers)
     ]
     before = [day - timedelta(days=n) for n in (range(1, 4) if first_section == "Weekend" else (1,))]
     for item in list(draft.done):
@@ -394,7 +442,7 @@ def check_facts(draft: Draft, notes: str, day: date, first_section: str = "Yeste
             for wrong, right in (('\\"', '"'), ("\\\\", "\\")):
                 if wrong in getattr(item, name) and wrong not in notes:
                     setattr(item, name, getattr(item, name).replace(wrong, right))
-        if item.issue and not re.search(rf"(?<!\d){item.issue}(?!\d)", notes):
+        if item.issue and not _in_notes(item.issue, notes):
             ask.append(f"The AI added issue-{item.issue}, which isn't in your notes, so it was removed: {item.task}")
             item.issue = ""
         label = re.escape(item.label)
@@ -415,13 +463,13 @@ def check_facts(draft: Draft, notes: str, day: date, first_section: str = "Yeste
             item.ref_statuses.pop(ref, None)
         if item.project and (not statuses.same_words(item.project, notes) and item.project.lower() not in re.sub(r"https?://\S+", " ", low)):
             item.project = ""
-        if item.purpose and item.task and _share(item.purpose, item.task) > 0.8:
+        if item.purpose and item.task and _covered(item.purpose, item.task) > 0.8:
             item.purpose = ""  # the task says it already
         if item.purpose and not re.search(r"\b(?:because|since|so that|in order to|due to|caused?|reason|otherwise|to avoid|to prevent|why)\b|ので|ため", low):
             item.task, item.purpose = f"{item.task} ({item.purpose})" if item.task else item.purpose, ""  # a result, not a reason
     if len({item.project for item in tasks} - {""}) == 1:  # one project needs no heading
         for item in tasks:
-            if item.project and item.task and _share(item.project, item.task) < 1:
+            if item.project and item.task and _covered(item.project, item.task) < 1:
                 item.task += f" ({item.project})"
             item.project = ""
     for item in draft.plans:
@@ -482,7 +530,7 @@ def check_facts(draft: Draft, notes: str, day: date, first_section: str = "Yeste
     in_done = _numbers(" ".join(_text_of_task(item) for item in draft.done))
     not_done = _numbers(" ".join([*draft.older, *draft.remarks, *draft.others]))
     lost_status = {number: evidence.said for number, evidence in known.items() if evidence.said and number not in in_done | not_done}
-    if draft.no_blockers and not re.search(r"\b(?:no|none|nothing|without|not any|n/a)\b|なし|ありません", low):
+    if draft.no_blockers and not NO_BLOCKERS.search(notes):
         draft.no_blockers = False
     if draft.blockers:
         draft.no_blockers = False
@@ -522,8 +570,10 @@ def check_facts(draft: Draft, notes: str, day: date, first_section: str = "Yeste
     missing = []
     for part in statuses.sentences(notes):
         is_status = re.match(r"(?i)\W*(?:both|all|no|not|nothing|none|blockers?\W+no(?:ne)?)\b", part) and len(part.split()) <= 5
-        in_settings = any(text and text in part for text in (draft.reviewer, draft.report_date))
-        if _is_japanese(part) or is_status or in_settings or len(statuses.words(part) - SMALL_WORDS) < 2:
+        own = statuses.words(part) - SMALL_WORDS
+        if draft.reviewer.lower().strip(" @") in part.lower() or draft.report_date.lower() in part.lower():
+            own -= SETTINGS_WORDS | statuses.words(draft.reviewer) | statuses.words(draft.report_date)  # "@Sam please check"
+        if _is_japanese(part) or is_status or len(own) < 2:
             continue
         if _share(part, kept) < 0.4:
             missing.append(part.strip(" -*•◦"))
