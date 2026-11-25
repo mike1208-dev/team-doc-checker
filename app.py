@@ -12,6 +12,9 @@ rules = st.Page("views/manage_rules.py", title="Manage rules", icon="⚙️")
 page = st.navigation([write, rules], position="hidden")
 
 use_design()
-show_header(rules if page == write else write)
+if page == write:
+    show_header(rules, disabled=True)  # turned off for now
+else:
+    show_header(write)
 show_skeleton(page.title)
 page.run()

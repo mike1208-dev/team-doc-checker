@@ -26,10 +26,10 @@ def use_design():
     st.html(Path(__file__).with_name("design.css"))
 
 
-def show_header(other_page):
+def show_header(other_page, disabled: bool = False):
     with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center", key="header"):
         st.html("<h1>📝 ZeeChecker</h1><p>Write plain notes. Get a daily report that is ready to post.</p>", width="content")
-        st.page_link(other_page)
+        st.page_link(other_page, disabled=disabled)
 
 
 def show_skeleton(page_name: str):
