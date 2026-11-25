@@ -33,7 +33,7 @@ rules:
   - id: status_or_result
     title: Each finished task has a status or result
     check: llm
-    question: "Does each finished task (under Yesterday or Weekend) have a status or result, such as Merged, In review, a PR link or a number?"
+    question: "Does each finished task (under Yesterday or Weekend) have a status or result, such as Merged, In review, In progress, Done, a PR link or a number?"
 
   - id: overall_progress
     title: Says the overall progress
