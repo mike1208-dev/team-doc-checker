@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import date
 
 import pytest
@@ -267,3 +268,56 @@ def test_the_admin_adds_a_company(client):
     companies = client.get("/api/console", headers=admin).json()["companies"]
     assert [(row["name"], row["owner"], row["people"], row["teams"]) for row in companies] == [
         ("ZeeSpires", "Dan", 7, 4), ("Northwind", "Nora", 3, 1), ("Contoso", "Carla", 1, 0)]
+
+
+def test_the_owner_sets_up_teams_and_people(client):
+    admin = sign_in(client, "admin")
+    client.post("/api/companies", headers=admin, json={"name": "Contoso", "owner_name": "Carla", "owner_email": "carla@contoso.ai"})
+    carla = {"Authorization": "Bearer " + client.post("/api/login", json={"email": "carla@contoso.ai", "password": db.FAKE_PASSWORD}).json()["token"]}
+    team = client.post("/api/teams", headers=carla, json={"name": " Web  Team "}).json()
+    assert team["name"] == "Web Team" and client.post("/api/teams", headers=carla, json={"name": "web team"}).status_code == 422  # the same name
+    assert client.post("/api/teams", headers=sign_in(client, "illia"), json={"name": "Mine"}).status_code == 403  # owners only
+    people = client.put(f"/api/teams/{team['id']}/people", headers=carla, json={"name": "Raj", "email": "Raj@Contoso.ai", "role": "Manager"}).json()
+    assert people == [{"email": "raj@contoso.ai", "name": "Raj", "role": "Manager"}]
+    for email in ("mike@zeenote.ai", "admin@zeenote.ai", "carla@contoso.ai"):  # another company's, ZeeNote's own, the owner
+        assert client.put(f"/api/teams/{team['id']}/people", headers=carla, json={"name": "X", "email": email}).status_code == 422
+    raj = {"Authorization": "Bearer " + client.post("/api/login", json={"email": "raj@contoso.ai", "password": db.FAKE_PASSWORD}).json()["token"]}
+    assert client.get("/api/me", headers=raj).json()["teams"] == [{"id": team["id"], "name": "Web Team", "role": "Manager"}]
+    cova = team_id(client, sign_in(client, "dan"), "Cova Team")
+    assert client.get(f"/api/teams/{cova}/people", headers=carla).status_code == 404  # another company's team
+    assert client.delete(f"/api/teams/{team['id']}/people/raj@contoso.ai", headers=carla).json() == []
+    assert client.get("/api/me", headers=raj).json()["teams"] == []
+
+
+def test_names_differ_by_more_than_capitals(client):
+    admin = sign_in(client, "admin")
+    assert client.post("/api/companies", headers=admin, json={"name": "ZEESPIRES", "owner_name": "Z", "owner_email": "z@z.ai"}).status_code == 422
+    assert client.put("/api/company", headers=sign_in(client, "nora"), json={"name": "zeespires"}).status_code == 422
+    with db.connect(client.app.state.db_path) as conn, pytest.raises(sqlite3.IntegrityError):  # even past the checks
+        conn.execute("insert into companies (name) values ('zeeSPIRES')")
+
+
+def test_a_membership_across_companies_shows_nothing(client):
+    paul = sign_in(client, "paul")
+    cova = team_id(client, sign_in(client, "mike"), "Cova Team")
+    with db.connect(client.app.state.db_path) as conn:
+        conn.execute("insert into members values (?, 'paul@northwind.ai', 'Member')", (cova,))
+    assert "Cova Team" not in [team["name"] for team in client.get("/api/me", headers=paul).json()["teams"]]
+
+
+def test_real_companies_stay_when_the_api_starts_again(tmp_path):
+    path = tmp_path / "kept.db"
+    db.setup(path)
+    with db.connect(path) as conn:
+        conn.execute("insert into companies (name) values ('Contoso')")
+    db.setup(path)
+    with db.connect(path) as conn:
+        assert conn.execute("select count(*) from companies where name = 'Contoso'").fetchone()[0] == 1
+
+
+def test_a_name_taken_at_the_same_moment_is_the_same_message():
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as caught, main.unique("Another company already has this name."):
+        raise sqlite3.IntegrityError("UNIQUE constraint failed: companies.name")
+    assert (caught.value.status_code, caught.value.detail) == (422, "Another company already has this name.")

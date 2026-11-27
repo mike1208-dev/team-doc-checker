@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { Icon } from "@/components/Icon";
 import { PageHead } from "@/components/Shell";
 import { Spinner } from "@/components/Spinner";
@@ -21,37 +21,47 @@ export default function ConsolePage() {
   const [formError, setFormError] = useState("");
   const [toast, setToast] = useState("");
 
-  const load = () => api<{ companies: Company[] }>("/console").then((data) => setCompanies(data.companies)).catch((e) => setError(e.message));
+  // throws when it fails, so adding a company only says it's done once the list shows it
+  async function load() {
+    setCompanies((await api<{ companies: Company[] }>("/console")).companies);
+  }
+
   useEffect(() => {
-    load();
+    load().catch((e) => setError(e.message));
   }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(""), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   async function add(event: React.FormEvent) {
     event.preventDefault();
-    const found: Partial<NewCompany> = {
-      name: form.name.trim() ? undefined : "Write the company's name.",
-      owner_name: form.owner_name.trim() ? undefined : "Write the owner's name.",
-      owner_email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.owner_email.trim()) ? undefined : "Write the owner's email, such as nora@northwind.ai.",
-    };
-    setProblems(found);
-    const first = (Object.keys(found) as (keyof NewCompany)[]).find((key) => found[key]);
-    if (first) {
-      document.getElementById(`new-${first}`)?.focus();
+    setBusy(true);
+    setProblems({});
+    setFormError("");
+    let created: { name: string };
+    try {
+      created = await api<{ name: string }>("/companies", { body: form });
+    } catch (e) {
+      // the API checks the fields, and says what's wrong with each
+      const fields = e instanceof ApiError ? (e.fields as Partial<NewCompany>) : {};
+      setProblems(fields);
+      const first = (Object.keys(EMPTY) as (keyof NewCompany)[]).find((key) => fields[key]);
+      if (first) document.getElementById(`new-${first}`)?.focus();
+      else setFormError((e as Error).message);
+      setBusy(false);
       return;
     }
-    setBusy(true);
-    setFormError("");
+    setForm(EMPTY);
+    setAdding(false);
+    setBusy(false);
     try {
-      const created = await api<{ name: string }>("/companies", { body: form });
       await load();
-      setForm(EMPTY);
-      setAdding(false);
       setToast(`${created.name} is added. Its owner signs in with the shared password.`);
-      setTimeout(() => setToast(""), 4000);
     } catch (e) {
-      setFormError((e as Error).message);
-    } finally {
-      setBusy(false);
+      setError(`${created.name} is added, but the list couldn't be loaded again: ${(e as Error).message}`);
     }
   }
 
@@ -83,7 +93,7 @@ export default function ConsolePage() {
             <div className="card-head">
               <div>
                 <h2>Add a company</h2>
-                <p className="soft small">The owner signs in with their email and the shared password, then sets up the company.</p>
+                <p className="soft small">The owner signs in with their email and the shared password, then adds teams and people in Settings.</p>
               </div>
             </div>
             <div className="card-body">

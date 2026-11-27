@@ -27,7 +27,8 @@ export type MySettings = {
 export type SavedTemplate = Template & { can_edit: boolean; updated_at: string | null; updated_by: string | null };
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  // the message for each wrong field of a form, by the field's name
+  constructor(message: string, readonly status: number, readonly fields: Record<string, string> = {}) {
     super(message);
   }
 }
@@ -64,8 +65,11 @@ export async function api<T>(path: string, options: { method?: string; body?: un
   if (!response.ok) {
     const detail = data?.detail;
     // FastAPI lists the wrong fields when the body doesn't fit
-    const message = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.map((item) => String(item.msg).replace(/^Value error, /, "")).join(" ") : `Something went wrong (${response.status}).`;
-    throw new ApiError(message, response.status);
+    const items: { loc?: unknown[]; msg: string }[] = Array.isArray(detail) ? detail : [];
+    const text = (item: { msg: string }) => String(item.msg).replace(/^Value error, /, "");
+    const message = typeof detail === "string" ? detail : items.length ? items.map(text).join(" ") : `Something went wrong (${response.status}).`;
+    const fields = Object.fromEntries(items.filter((item) => item.loc && item.loc.length > 1).map((item) => [String(item.loc!.at(-1)), text(item)]));
+    throw new ApiError(message, response.status, fields);
   }
   return data as T;
 }

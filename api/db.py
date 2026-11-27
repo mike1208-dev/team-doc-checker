@@ -39,7 +39,9 @@ create table if not exists reports (
 create table if not exists sessions (token text primary key, email text not null references users(email), created_at text not null default (datetime('now')));
 """
 
-SAMPLE = 5  # raised when the sample companies, people or teams change, so an older database starts again
+# Databases older than this one hold only sample data, so they start again. From this one on, admins add real
+# companies, so a database is never dropped: a change to the sample data needs its own change to the database
+KEPT_FROM = 5
 # name: (email, owner, admin, company). In ZeeSpires, Illia manages three teams and Mike works in two of them; the Support
 # Team has its own manager. Northwind is a second, small company, to show that companies don't see each other
 USERS = {
@@ -95,12 +97,15 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
 
 def setup(path: Path = DB_PATH) -> None:
     with connect(path) as db:
-        if db.execute("pragma table_info(users)").fetchone() and db.execute("pragma user_version").fetchone()[0] < SAMPLE:
-            # an older sample company, with other people or teams: start again
+        if db.execute("pragma table_info(users)").fetchone() and db.execute("pragma user_version").fetchone()[0] < KEPT_FROM:
+            # the first versions, with one sample company: start again
             names = ("sessions", "reports", "settings", "templates", "members", "teams", "users", "company", "companies")
             db.executescript("".join(f"drop table if exists {name};" for name in names))
         db.executescript(SCHEMA)
-        db.execute(f"pragma user_version = {SAMPLE}")
+        db.execute(f"pragma user_version = {KEPT_FROM}")
+        # names that differ only in capitals are the same name
+        db.execute("create unique index if not exists company_names on companies (name collate nocase)")
+        db.execute("create unique index if not exists team_names on teams (company_id, name collate nocase)")
         # one report a person, team and day: a report copied again replaces that day's one. Copies saved twice before
         # this rule keep only the newest
         db.execute("delete from reports where id not in (select max(id) from reports group by email, team_id, day)")

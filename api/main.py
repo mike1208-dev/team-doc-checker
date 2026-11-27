@@ -9,6 +9,7 @@ import json
 import re
 import secrets
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
@@ -116,16 +117,27 @@ class LayoutIn(BaseModel):
         return self
 
 
+def plain_text(value: str, problem: str, longest: int = 60) -> str:
+    value = " ".join(value.split())
+    if not value or len(value) > longest:
+        raise ValueError(problem)
+    return value
+
+
+def email_address(value: str, problem: str) -> str:
+    value = value.strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+        raise ValueError(problem)
+    return value
+
+
 class CompanyIn(BaseModel):
     name: str
 
     @field_validator("name")
     @classmethod
-    def plain_name(cls, name: str) -> str:
-        name = " ".join(name.split())
-        if not name or len(name) > 60:
-            raise ValueError("Write the company's name, up to 60 characters.")
-        return name
+    def company_name(cls, name: str) -> str:
+        return plain_text(name, "Write the company's name, up to 60 characters.")
 
 
 class NewCompanyIn(CompanyIn):
@@ -135,18 +147,48 @@ class NewCompanyIn(CompanyIn):
     @field_validator("owner_name")
     @classmethod
     def person_name(cls, name: str) -> str:
-        name = " ".join(name.split())
-        if not name or len(name) > 60:
-            raise ValueError("Write the owner's name.")
-        return name
+        return plain_text(name, "Write the owner's name.")
 
     @field_validator("owner_email")
     @classmethod
     def email(cls, email: str) -> str:
-        email = email.strip().lower()
-        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
-            raise ValueError("Write the owner's email, such as nora@northwind.ai.")
-        return email
+        return email_address(email, "Write the owner's email, such as nora@northwind.ai.")
+
+
+class TeamIn(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def team_name(cls, name: str) -> str:
+        return plain_text(name, "Write the team's name, up to 40 characters.", 40)
+
+
+class MemberIn(BaseModel):
+    name: str
+    email: str
+    role: Literal["Manager", "Member"] = "Member"
+
+    @field_validator("name")
+    @classmethod
+    def person_name(cls, name: str) -> str:
+        return plain_text(name, "Write their name.")
+
+    @field_validator("email")
+    @classmethod
+    def email(cls, email: str) -> str:
+        return email_address(email, "Write their email, such as olivia@northwind.ai.")
+
+
+@contextmanager
+def unique(message: str):
+    """
+    A name or email that another request took at the same moment gets the same message as one taken before.
+    """
+    try:
+        yield
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(422, message) from e
 
 
 class TemplateIn(BaseModel):
@@ -190,12 +232,34 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         Owner, Manager or Member for this team, or "" when the person isn't in it. A team of another company doesn't
         exist for them, so nothing shows that it's there.
         """
-        if not conn.execute("select 1 from teams where id = ? and company_id is ?", (team_id, user["company_id"])).fetchone():
+        if not conn.execute("select 1 from teams where id = ? and company_id = ?", (team_id, user["company_id"])).fetchone():
             raise HTTPException(404, "This team doesn't exist.")
         if user["owner"]:
             return "Owner"
         row = conn.execute("select role from members where team_id = ? and email = ?", (team_id, user["email"])).fetchone()
         return row["role"] if row else ""
+
+    def teams_of(conn, user) -> list[dict]:
+        """
+        The teams a person sees: all of their company's for the owner, the ones they're in for the others. Only ever
+        teams of their own company, so a membership that crosses companies shows nothing.
+        """
+        if user["owner"]:
+            rows = conn.execute("select id, name, 'Owner' as role from teams where company_id = ? order by id", (user["company_id"],))
+        else:
+            rows = conn.execute(
+                "select teams.id, teams.name, members.role from members join teams on teams.id = team_id where email = ? and teams.company_id = ? order by teams.id",
+                (user["email"], user["company_id"]),
+            )
+        return [dict(row) for row in rows]
+
+    def owns_team(conn, user, team_id: int) -> None:
+        if team_role(conn, user, team_id) != "Owner":
+            raise HTTPException(403, "Only the company's owner can change its teams.")
+
+    def people_of(conn, team_id: int) -> list[dict]:
+        rows = conn.execute("select email, name, role from members join users using (email) where team_id = ? order by role, name", (team_id,))
+        return [dict(row) for row in rows]
 
     def in_team(conn, user, team_id: int) -> None:
         if team_role(conn, user, team_id) not in ("Manager", "Member"):
@@ -238,14 +302,11 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
 
     @app.get("/api/me")
     def me(user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
-        if user["owner"]:
-            rows = conn.execute("select * from teams where company_id = ? order by id", (user["company_id"],))
-            teams = [{"id": row["id"], "name": row["name"], "role": "Owner"} for row in rows]
-        else:
-            rows = conn.execute("select teams.id, teams.name, members.role from members join teams on teams.id = team_id where email = ? order by teams.id", (user["email"],))
-            teams = [dict(row) for row in rows]
-        company = conn.execute("select name from companies where id is ?", (user["company_id"],)).fetchone()
-        return {"email": user["email"], "name": user["name"], "owner": bool(user["owner"]), "admin": bool(user["admin"]), "teams": teams, "company": company["name"] if company else ""}
+        company = conn.execute("select name from companies where id = ?", (user["company_id"],)).fetchone()
+        return {
+            "email": user["email"], "name": user["name"], "owner": bool(user["owner"]), "admin": bool(user["admin"]),
+            "teams": teams_of(conn, user), "company": company["name"] if company else "",
+        }
 
     @app.put("/api/company")
     def rename_company(body: CompanyIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
@@ -254,10 +315,61 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         """
         if not user["owner"]:
             raise HTTPException(403, "Only the company's owner can change its name.")
-        if conn.execute("select 1 from companies where name = ? and id != ?", (body.name, user["company_id"])).fetchone():
-            raise HTTPException(422, "Another company already has this name.")
-        conn.execute("update companies set name = ? where id = ?", (body.name, user["company_id"]))
+        taken = "Another company already has this name."
+        if conn.execute("select 1 from companies where name = ? collate nocase and id != ?", (body.name, user["company_id"])).fetchone():
+            raise HTTPException(422, taken)
+        with unique(taken):
+            conn.execute("update companies set name = ? where id = ?", (body.name, user["company_id"]))
         return {"name": body.name}
+
+    @app.post("/api/teams")
+    def add_team(body: TeamIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+        """
+        A new team of the owner's company, with the built-in template.
+        """
+        if not user["owner"]:
+            raise HTTPException(403, "Only the company's owner can add teams.")
+        taken = "Your company already has a team with this name."
+        if conn.execute("select 1 from teams where company_id = ? and name = ? collate nocase", (user["company_id"], body.name)).fetchone():
+            raise HTTPException(422, taken)
+        with unique(taken):
+            team_id = db.add_team(conn, user["company_id"], body.name)
+        return {"id": team_id, "name": body.name}
+
+    @app.get("/api/teams/{team_id}/people")
+    def team_people(team_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+        owns_team(conn, user, team_id)
+        return people_of(conn, team_id)
+
+    @app.put("/api/teams/{team_id}/people")
+    def add_person(team_id: int, body: MemberIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+        """
+        Adds someone to the team, or changes their role. Someone new joins the owner's company and signs in with the
+        shared password of v1.
+        """
+        owns_team(conn, user, team_id)
+        person = conn.execute("select * from users where email = ?", (body.email,)).fetchone()
+        if person and (person["company_id"] != user["company_id"] or person["admin"]):
+            raise HTTPException(422, "This email belongs to someone outside your company.")
+        if person and person["owner"]:
+            raise HTTPException(422, "The owner already sees every team.")
+        if not person:
+            conn.execute("insert into users (email, name, company_id) values (?, ?, ?)", (body.email, body.name, user["company_id"]))
+        conn.execute(
+            "insert into members (team_id, email, role) values (?, ?, ?) on conflict (team_id, email) do update set role = excluded.role",
+            (team_id, body.email, body.role),
+        )
+        return people_of(conn, team_id)
+
+    @app.delete("/api/teams/{team_id}/people/{email}")
+    def remove_person(team_id: int, email: str, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+        """
+        Takes someone out of the team. Their reports and their place in the company stay.
+        """
+        owns_team(conn, user, team_id)
+        if not conn.execute("delete from members where team_id = ? and email = ?", (team_id, email.lower())).rowcount:
+            raise HTTPException(404, "They aren't in this team.")
+        return people_of(conn, team_id)
 
     @app.get("/api/console")
     def console(user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
@@ -287,12 +399,15 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         """
         if not user["admin"]:
             raise HTTPException(403, "Only ZeeNote admins can add a company.")
-        if conn.execute("select 1 from companies where name = ?", (body.name,)).fetchone():
-            raise HTTPException(422, "A company with this name already uses ZeeNote.")
+        name_taken, email_taken = "A company with this name already uses ZeeNote.", "Someone with this email already uses ZeeNote."
+        if conn.execute("select 1 from companies where name = ? collate nocase", (body.name,)).fetchone():
+            raise HTTPException(422, name_taken)
         if conn.execute("select 1 from users where email = ?", (body.owner_email,)).fetchone():
-            raise HTTPException(422, "Someone with this email already uses ZeeNote.")
-        company_id = conn.execute("insert into companies (name) values (?)", (body.name,)).lastrowid
-        conn.execute("insert into users (email, name, company_id, owner) values (?, ?, ?, 1)", (body.owner_email, body.owner_name, company_id))
+            raise HTTPException(422, email_taken)
+        with unique(name_taken):
+            company_id = conn.execute("insert into companies (name) values (?)", (body.name,)).lastrowid
+        with unique(email_taken):
+            conn.execute("insert into users (email, name, company_id, owner) values (?, ?, ?, 1)", (body.owner_email, body.owner_name, company_id))
         return {"id": company_id, "name": body.name}
 
     @app.post("/api/reports/write")

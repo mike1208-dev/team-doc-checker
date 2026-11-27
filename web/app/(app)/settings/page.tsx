@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { api } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { api, ApiError } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { Icon } from "@/components/Icon";
 import { PageHead } from "@/components/Shell";
+import { TeamsAndPeople } from "@/components/TeamsAndPeople";
 
-// The owner's settings of the company. Only its name for now
+// The owner's settings of the company: its name, and its teams and people
 export default function SettingsPage() {
   const { me, changeMe } = useSession();
   const [name, setName] = useState(me.company);
@@ -14,12 +15,14 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
 
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(""), 3500);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (!name.trim()) {
-      setProblem("Write the company's name.");
-      return;
-    }
     setBusy(true);
     setProblem("");
     try {
@@ -27,9 +30,8 @@ export default function SettingsPage() {
       changeMe({ company: saved.name });
       setName(saved.name);
       setToast("Saved. Everyone in the company sees the new name.");
-      setTimeout(() => setToast(""), 3000);
     } catch (e) {
-      setProblem((e as Error).message);
+      setProblem(e instanceof ApiError ? e.fields.name ?? e.message : (e as Error).message); // the API checks the name
     } finally {
       setBusy(false);
     }
@@ -62,6 +64,7 @@ export default function SettingsPage() {
             </button>
           </div>
         </form>
+        <TeamsAndPeople onDone={setToast} />
       </main>
       {toast && <div className="toast" role="status"><Icon name="check" size={15} />{toast}</div>}
     </>
