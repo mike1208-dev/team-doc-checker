@@ -9,13 +9,14 @@ import json
 import re
 import secrets
 import sqlite3
+from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 load_dotenv()  # GROQ_API_KEY from .env, before the checker reads it
 
@@ -25,7 +26,7 @@ from checker.report import count, run_checks  # noqa: E402
 from checker.result import PASS, SKIP  # noqa: E402
 from checker.styles import Style, slugify  # noqa: E402
 from checker.validation import validate_style  # noqa: E402
-from checker.writer import UNUSED_RULES, Settings, WriterError, extract, render, settings_questions, unknown_terms  # noqa: E402
+from checker.writer import GREETING, UNUSED_RULES, Draft, Layout, Settings, Task, WriterError, extract, render, rules_for_layout, settings_questions, unknown_terms  # noqa: E402
 from views.points import points_to_check, split_point  # noqa: E402
 
 REPO = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+")
@@ -82,8 +83,65 @@ class Rule(BaseModel, extra="allow"):
     enabled: bool = True
 
 
+class LayoutIn(BaseModel):
+    """
+    The team's format of the report: its section names and a few details. See Layout.
+    """
+
+    done: str = "Yesterday"
+    weekend: str = "Weekend"
+    today: str = "Today"
+    blockers: str = "Blockers"
+    notes: str = "Notes"
+    icons: bool = True
+    hours: bool = True
+    links: bool = True
+    greeting: bool = True
+
+    @field_validator("done", "weekend", "today", "blockers", "notes")
+    @classmethod
+    def plain_name(cls, name: str) -> str:
+        name = " ".join(name.split())
+        if not name:
+            raise ValueError("Write a name for each section.")
+        if len(name) > 30 or re.search(r"[*_`#\[\]/@:<>]", name):
+            raise ValueError("Keep section names short, with letters, numbers and spaces only.")
+        return name
+
+    @model_validator(mode="after")
+    def different_names(self) -> "LayoutIn":
+        names = [self.done, self.weekend, self.today, self.blockers, self.notes]
+        if len({name.lower() for name in names}) < len(names):
+            raise ValueError("Give each section a different name.")
+        return self
+
+
+class CompanyIn(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def plain_name(cls, name: str) -> str:
+        name = " ".join(name.split())
+        if not name or len(name) > 60:
+            raise ValueError("Write the company's name, up to 60 characters.")
+        return name
+
+
 class TemplateIn(BaseModel):
     rules: list[Rule]
+    layout: LayoutIn = LayoutIn()
+
+
+# A short made-up report, to show a team's format before it's saved
+SAMPLE_DRAFT = Draft(
+    done=[
+        Task("Booking list shows the wrong date", issue="95", label="FIX", refs=["PR #102"], ref_statuses={"PR #102": "Merged"}),
+        Task("Practiced the project presentation", status="Done"),
+    ],
+    plans=[Task("Add validation to the password reset form", issue="97", label="CHORE")],
+    blockers=["Waiting for QA validation on staging"],
+)
 
 
 def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
@@ -123,10 +181,12 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
 
     def template(conn, team_id: int) -> dict:
         data = json.loads(conn.execute("select data from templates where team_id = ?", (team_id,)).fetchone()["data"])
-        return {"rules": data["rules"]}  # an older template also has the settings that each person has now
+        # an older template has no format yet, and the settings that each person has now
+        return {"rules": data["rules"], "layout": {**asdict(Layout()), **data.get("layout", {})}}
 
     def style_of(data: dict) -> Style:
         rules = [{key: value for key, value in rule.items() if key != "enabled"} for rule in data["rules"] if rule.get("enabled", True)]
+        rules = rules_for_layout(rules, Layout(**data["layout"]))  # the section rules use the team's names
         return Style("daily_report", "Daily report", [rule for rule in rules if rule["id"] not in UNUSED_RULES])
 
     def checked(text: str, data: dict, questions: list[str], check_ai: bool, edited: bool) -> dict:
@@ -161,7 +221,18 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         else:
             rows = conn.execute("select teams.id, teams.name, members.role from members join teams on teams.id = team_id where email = ? order by teams.id", (user["email"],))
             teams = [dict(row) for row in rows]
-        return {"email": user["email"], "name": user["name"], "owner": bool(user["owner"]), "admin": bool(user["admin"]), "teams": teams}
+        company = conn.execute("select name from company").fetchone()["name"]
+        return {"email": user["email"], "name": user["name"], "owner": bool(user["owner"]), "admin": bool(user["admin"]), "teams": teams, "company": company}
+
+    @app.put("/api/company")
+    def rename_company(body: CompanyIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+        """
+        Only the company's owner renames it. ZeeNote's admins see the name, but don't change it.
+        """
+        if not user["owner"]:
+            raise HTTPException(403, "Only the company's owner can change its name.")
+        conn.execute("update company set name = ?", (body.name,))
+        return {"name": body.name}
 
     @app.get("/api/console")
     def console(user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
@@ -172,7 +243,7 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
             raise HTTPException(403, "Only ZeeNote admins can open the console.")
         number = lambda sql: conn.execute(sql).fetchone()[0]  # noqa: E731
         company = {
-            "name": db.COMPANY,
+            "name": conn.execute("select name from company").fetchone()["name"],
             "owner": conn.execute("select name from users where owner = 1").fetchone()["name"],
             "people": number("select count(*) from users where admin = 0"),
             "teams": number("select count(*) from teams"),
@@ -196,7 +267,7 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
             draft = extract(notes, day=body.day, first_section=body.first_section)
         except WriterError as e:
             raise HTTPException(422, str(e)) from e
-        text = render(draft, settings)
+        text = render(draft, settings, Layout(**data["layout"]))
         questions = settings_questions(draft, settings) + draft.questions
         known = [term for rule in data["rules"] if rule.get("enabled", True) for term in rule.get("known_terms") or []]
         if terms := unknown_terms(draft, known):
@@ -210,6 +281,14 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         """
         in_team(conn, user, body.team_id)
         return checked(body.text, template(conn, body.team_id), body.questions, body.check_ai, edited=True)
+
+    @app.post("/api/template/preview")
+    def preview(body: LayoutIn, user=Depends(signed_in)):
+        """
+        A made-up report in a format that isn't saved yet.
+        """
+        settings = Settings(date.today(), "Illia", "Yesterday", 8.0, 8.0, "https://github.com/acme/app", GREETING)
+        return markup(render(SAMPLE_DRAFT, settings, Layout(**body.model_dump())))
 
     @app.post("/api/render")
     def rendered(body: TextIn, user=Depends(signed_in)):

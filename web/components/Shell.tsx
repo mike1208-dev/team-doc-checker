@@ -22,7 +22,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
       {open && <div className="scrim" onClick={() => setOpen(false)} aria-hidden="true" />}
       <nav className={`side ${open ? "open" : ""}`} aria-label="Menu">
         <div className="brand">
-          <img src="/zeenote-mark.png" alt="" /> ZeeNote
+          <img src="/zeenote-mark.png" alt="" />
+          <span style={{ minWidth: 0 }}>
+            ZeeNote
+            {!me.admin && <span className="company-name">{me.company}</span>}
+          </span>
         </div>
         {picker ? (
           <div className="switcher">

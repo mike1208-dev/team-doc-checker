@@ -25,6 +25,7 @@ export function pagesOf(me: Me): Page[] {
   return [
     ...(writes ? [{ href: "/write", icon: "write" as const, label: "Write report", group }, { href: "/reports", icon: "reports" as const, label: "My reports", group }] : []),
     ...(edits ? [{ href: "/templates", icon: "templates" as const, label: "Template and rules", group }] : []),
+    ...(me.owner ? [{ href: "/company", icon: "building" as const, label: "Company", group }] : []),
   ];
 }
 
@@ -33,7 +34,7 @@ export function teamsFor(me: Me, path: string): Team[] {
   return path.startsWith("/templates") ? me.teams.filter((team) => team.role !== "Member") : me.teams;
 }
 
-type Session = { me: Me; team: Team | undefined; teams: Team[]; chooseTeam: (id: number) => void; signOut: () => void };
+type Session = { me: Me; team: Team | undefined; teams: Team[]; chooseTeam: (id: number) => void; signOut: () => void; changeMe: (change: Partial<Me>) => void };
 
 const SessionContext = createContext<Session | null>(null);
 
@@ -77,6 +78,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } catch {}
   }, []);
 
+  // after a change on a page, such as a new company name, so the menu shows it at once
+  const changeMe = useCallback((change: Partial<Me>) => setMe((old) => (old ? { ...old, ...change } : old)), []);
+
   const signOut = useCallback(() => {
     api("/logout", { method: "POST" }).catch(() => {});
     setToken("");
@@ -96,5 +100,5 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const teams = teamsFor(me, path);
   const team = teams.find((item) => item.id === teamId) ?? teams[0];
-  return <SessionContext.Provider value={{ me, team, teams, chooseTeam, signOut }}>{children}</SessionContext.Provider>;
+  return <SessionContext.Provider value={{ me, team, teams, chooseTeam, signOut, changeMe }}>{children}</SessionContext.Provider>;
 }

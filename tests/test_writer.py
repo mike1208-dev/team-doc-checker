@@ -14,7 +14,7 @@ from checker.report import run_checks
 from checker.store import YamlStore
 from checker.styles import Style, load_styles
 from checker.writer import (
-    MAX_CHARS, NO_BLOCKERS, Settings, WriterError, _in_notes, _tasks, day_hours, extract, long_date, render, rules_for_report, settings_questions, unknown_terms,
+    MAX_CHARS, NO_BLOCKERS, Layout, Settings, WriterError, _in_notes, _tasks, day_hours, extract, long_date, render, rules_for_layout, rules_for_report, settings_questions, unknown_terms,
 )
 
 NOTES = """yesterday fixed the date bug on booking list, pr 102 merged. reset form pr 101 still in review, 7h total.
@@ -850,3 +850,23 @@ def test_questions_split_into_their_items():
     assert split_point("Clear and short: Too long") == {"ask": "Clear and short: Too long", "items": []}
     code = Path("checker/writer.py").read_text(encoding="utf-8") + Path("api/main.py").read_text(encoding="utf-8")
     assert all(ask in code for ask in ASKS)  # a question reworded in the writer needs the same words here
+
+
+@pytest.mark.parametrize("icons", [True, False])
+def test_a_team_layout_passes_its_own_rules(icons):
+    layout = Layout(done="Done", weekend="Weekend work", today="Plan", blockers="Stuck on", notes="Other", icons=icons, links=False)
+    draft = write()
+    text = render(draft, Settings(date(2026, 11, 25), reviewer="Illia", done_hours=7.0, plan_hours=8.0, repo="https://github.com/acme/app"), layout)
+    assert "**Done** (7 hours)" in text and "**Plan** (8 hours)" in text and "**Stuck on**" in text
+    assert "PR #102" in text and "github.com" not in text  # no full links
+    assert (":dart:" in text) == icons
+    style = Style("daily_report", "Daily report", rules_for_layout(team_rules().rules, layout))
+    results = {result.rule_id: result.status for result in run_checks(text, style, use_llm=False)}
+    assert results["has_sections"] == "PASS" and results["has_hours"] == "PASS"
+
+
+def test_without_hours_the_hours_rule_is_left_out():
+    layout = Layout(hours=False, greeting=False)
+    text = render(write(), Settings(date(2026, 11, 25), reviewer="Illia", done_hours=7.0, greeting="Hello"), layout)
+    assert "hours" not in text and "Hello" not in text
+    assert "has_hours" not in {rule["id"] for rule in rules_for_layout(team_rules().rules, layout)}

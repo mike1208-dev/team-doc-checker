@@ -4,7 +4,7 @@ const TOKEN = "zeenote-token";
 
 export type Role = "Owner" | "Manager" | "Member";
 export type Team = { id: number; name: string; role: Role };
-export type Me = { email: string; name: string; owner: boolean; admin: boolean; teams: Team[] };
+export type Me = { email: string; name: string; owner: boolean; admin: boolean; teams: Team[]; company: string };
 export type RuleResult = { id: string; title: string; status: "PASS" | "FAIL" | "WARN" | "SKIP" };
 export type Ask = { ask: string; items: string[] };
 export type Checked = { html: string; slack: string; points: string[]; asks: Ask[]; rules: RuleResult[]; summary: string };
@@ -12,7 +12,9 @@ export type Written = Checked & { notes: string; text: string; questions: string
 export type ReportRow = { id: number; day: string; team_id: number; team: string; text: string; created_at: string };
 export type Report = ReportRow & { notes: string; html: string; slack: string };
 export type Rule = { id: string; check: string; title: string; enabled: boolean; question?: string; known_terms?: string[]; [option: string]: unknown };
-export type Template = { rules: Rule[] };
+// the team's format of the report: its section names and a few details (Layout in checker/writer.py)
+export type Layout = { done: string; weekend: string; today: string; blockers: string; notes: string; icons: boolean; hours: boolean; links: boolean; greeting: boolean };
+export type Template = { rules: Rule[]; layout: Layout };
 // what each person sets for their reports in a team; the next report starts from the last one
 export type MySettings = {
   reviewer: string;
@@ -62,7 +64,7 @@ export async function api<T>(path: string, options: { method?: string; body?: un
   if (!response.ok) {
     const detail = data?.detail;
     // FastAPI lists the wrong fields when the body doesn't fit
-    const message = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.map((item) => item.msg).join(" ") : `Something went wrong (${response.status}).`;
+    const message = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.map((item) => String(item.msg).replace(/^Value error, /, "")).join(" ") : `Something went wrong (${response.status}).`;
     throw new ApiError(message, response.status);
   }
   return data as T;

@@ -62,7 +62,7 @@ def test_admin_sees_numbers_only(client, no_ai):
     app_team = team_id(client, mike, "Cova Team")
     client.post("/api/reports", headers=mike, json={"team_id": app_team, "day": DAY, "text": "- **Today**"})
     company = client.get("/api/console", headers=admin).json()["companies"][0]
-    assert (company["name"], company["owner"], company["people"], company["teams"], company["reports"]) == ("Acme Inc.", "Dan", 7, 4, 1)
+    assert (company["name"], company["owner"], company["people"], company["teams"], company["reports"]) == ("ZeeSpires", "Dan", 7, 4, 1)
     assert client.get(f"/api/teams/{app_team}/template", headers=admin).status_code == 403
     assert client.get("/api/console", headers=sign_in(client, "dan")).status_code == 403
 
@@ -203,3 +203,35 @@ def test_reset(client):
     client.put(f"/api/teams/{app_team}/template", headers=illia, json={"rules": data["rules"][:1]})
     reset = client.post(f"/api/teams/{app_team}/template/reset", headers=illia).json()
     assert reset["rules"] == db.default_template()["rules"]
+
+
+def test_a_team_format_is_used_checked_and_reset(client, no_ai):
+    illia, mike = sign_in(client, "illia"), sign_in(client, "mike")
+    cova = team_id(client, illia, "Cova Team")
+    data = client.get(f"/api/teams/{cova}/template", headers=illia).json()
+    assert data["layout"]["done"] == "Yesterday" and data["layout"]["icons"] is True
+    layout = {**data["layout"], "done": "Done", "today": "Plan", "icons": False}
+    assert client.put(f"/api/teams/{cova}/template", headers=illia, json={**data, "layout": layout}).json()["layout"]["done"] == "Done"
+    body = {"team_id": cova, "notes": "fixed the login page, merged", "day": DAY, "done_hours": 7, "plan_hours": 8, "reviewer": "Illia",
+            "repo": "", "greeting": "Hi", "check_ai": False}
+    result = client.post("/api/reports/write", headers=mike, json=body).json()
+    assert "**Done** (7 hours)" in result["text"] and ":dart:" not in result["text"]
+    assert {rule["id"]: rule["status"] for rule in result["rules"]}["has_sections"] == "PASS"  # the rule follows the names
+
+    for wrong in ({"done": " "}, {"done": "plan"}, {"today": "**Plan**"}):  # empty, the same as another, markup
+        response = client.put(f"/api/teams/{cova}/template", headers=illia, json={**data, "layout": {**layout, **wrong}})
+        assert response.status_code == 422
+    preview = client.post("/api/template/preview", headers=mike, json={"done": "Shipped"}).json()
+    assert "Shipped" in preview["html"]
+    assert client.post(f"/api/teams/{cova}/template/reset", headers=illia).json()["layout"]["done"] == "Yesterday"
+
+
+def test_only_the_owner_renames_the_company(client):
+    dan, illia, admin = sign_in(client, "dan"), sign_in(client, "illia"), sign_in(client, "admin")
+    assert client.get("/api/me", headers=illia).json()["company"] == "ZeeSpires"
+    for someone in (illia, admin):
+        assert client.put("/api/company", headers=someone, json={"name": "Other"}).status_code == 403
+    assert client.put("/api/company", headers=dan, json={"name": "  "}).status_code == 422
+    assert client.put("/api/company", headers=dan, json={"name": " ZeeSpires   Labs "}).json() == {"name": "ZeeSpires Labs"}
+    assert client.get("/api/me", headers=illia).json()["company"] == "ZeeSpires Labs"
+    assert client.get("/api/console", headers=admin).json()["companies"][0]["name"] == "ZeeSpires Labs"

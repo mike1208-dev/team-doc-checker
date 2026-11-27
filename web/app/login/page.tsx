@@ -12,7 +12,7 @@ const ACCOUNTS = [
   ["mike@zeenote.ai", "Team Member (Mike), Cova and AI-Training teams"],
   ["admin@zeenote.ai", "ZeeNote Admin"],
 ];
-// Shown only on this computer. Through a shared link, people get their email and the password from you
+// Where the password is set is shown only on this computer. Through a shared link, people get the password from you
 const isLocal = () => typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname);
 
 export default function Login() {
@@ -23,10 +23,25 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [local, setLocal] = useState(false);
   const [shown, setShown] = useState(false);
+  const [problems, setProblems] = useState<{ email?: string; password?: string }>({});
   useEffect(() => setLocal(isLocal()), []);
+
+  // Checked here, so each problem shows under its own field like the rest of ZeeNote
+  function fieldsOk(): boolean {
+    const found = {
+      email: !email.trim() ? "Write your email." : /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ? undefined : "Write an email such as mike@zeenote.ai.",
+      password: password ? undefined : "Write your password.",
+    };
+    setProblems(found);
+    const first = found.email ? "email" : found.password ? "password" : "";
+    if (first) document.getElementById(`login-${first}`)?.focus();
+    return !first;
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    setError("");
+    if (!fieldsOk()) return;
     setBusy(true);
     setError("");
     try {
@@ -45,38 +60,49 @@ export default function Login() {
         <div className="brand" style={{ justifyContent: "center", fontSize: 24 }}>
           <img src="/zeenote-mark.png" alt="" /> ZeeNote
         </div>
-        <form className="card stack" onSubmit={submit}>
+        <form className="card stack" onSubmit={submit} noValidate>
           <h1>Sign in</h1>
           <label>
             Email
-            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required />
+            <input id="login-email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); setProblems({ ...problems, email: undefined }); }}
+              autoComplete="username" aria-invalid={Boolean(problems.email)} aria-describedby={problems.email ? "login-email-problem" : undefined} />
+            {problems.email && <span id="login-email-problem" className="field-problem">{problems.email}</span>}
           </label>
           <label>
             Password
             <span className="with-button">
-              <input type={shown ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
+              <input id="login-password" type={shown ? "text" : "password"} value={password} onChange={(event) => { setPassword(event.target.value); setProblems({ ...problems, password: undefined }); }}
+                autoComplete="current-password" aria-invalid={Boolean(problems.password)} aria-describedby={problems.password ? "login-password-problem" : undefined} />
               <button type="button" className="btn ghost icon" onClick={() => setShown(!shown)} aria-label={shown ? "Hide password" : "Show password"} aria-pressed={shown} title={shown ? "Hide password" : "Show password"}>
                 <Icon name={shown ? "eyeOff" : "eye"} />
               </button>
             </span>
+            {problems.password && <span id="login-password-problem" className="field-problem">{problems.password}</span>}
           </label>
-          {error && <p className="error" role="alert">{error}</p>}
+          {error && (
+            <p className="notice bad row" role="alert" style={{ gap: 8 }}>
+              <Icon name="alert" size={15} /> {error}
+            </p>
+          )}
           <button className="btn main" disabled={busy}>
             {busy ? "Signing in…" : "Sign in"}
           </button>
         </form>
-        {local && (
-          <div className="card stack small">
-            <p>
-              <b>Sample accounts</b> · the password is <code>ZEENOTE_PASSWORD</code> in <code>.env</code>, or <code>zeenote</code> if it isn&apos;t set
-            </p>
-            {ACCOUNTS.map(([address, role]) => (
-              <button key={address} className="link" style={{ textAlign: "left" }} onClick={() => setEmail(address)}>
-                {address} <span className="soft">· {role}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="card stack small">
+          <p>
+            <b>Sample accounts</b> ·{" "}
+            {local ? (
+              <>the password is <code>ZEENOTE_PASSWORD</code> in <code>.env</code>, or <code>zeenote</code> if it isn&apos;t set</>
+            ) : (
+              <>ask the person who shared this link for the password</>
+            )}
+          </p>
+          {ACCOUNTS.map(([address, role]) => (
+            <button key={address} className="link" style={{ textAlign: "left" }} onClick={() => { setEmail(address); setProblems({ ...problems, email: undefined }); }}>
+              {address} <span className="soft">· {role}</span>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

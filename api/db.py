@@ -6,10 +6,11 @@ version, so nothing needs to be set up. The sample company is added the first ti
 import json
 import os
 import sqlite3
+from dataclasses import asdict
 from pathlib import Path
 
 from checker.store import YamlStore
-from checker.writer import GREETING
+from checker.writer import GREETING, Layout
 
 DB_PATH = Path(os.getenv("ZEENOTE_DB", Path(__file__).resolve().parent.parent / "data" / "zeenote.db"))
 # The first version has no real sign-in: every sample account uses this password. Set your own in .env before sharing the app
@@ -30,10 +31,12 @@ create table if not exists reports (
     id integer primary key, email text not null references users(email), team_id integer not null references teams(id),
     day text not null, notes text not null, text text not null, created_at text not null default (datetime('now'))
 );
+-- the one company of the first version; its owner can rename it
+create table if not exists company (id integer primary key check (id = 1), name text not null);
 create table if not exists sessions (token text primary key, email text not null references users(email), created_at text not null default (datetime('now')));
 """
 
-COMPANY = "Acme Inc."  # the sample company
+COMPANY = "ZeeSpires"  # the sample company's first name
 SAMPLE = 4  # raised when the sample people or teams change, so an older database starts again
 # name: (email, owner, admin). Illia manages three teams, and Mike works in two of them. The Support Team has its own manager
 USERS = {
@@ -56,9 +59,9 @@ TEAMS = {
 
 def default_template() -> dict:
     """
-    What a new team starts with: the built-in daily report rules, all turned on.
+    What a new team starts with: the built-in daily report rules, all turned on, and the usual format.
     """
-    return {"rules": [{**rule, "enabled": True} for rule in YamlStore().list_styles()["daily_report"].rules]}
+    return {"rules": [{**rule, "enabled": True} for rule in YamlStore().list_styles()["daily_report"].rules], "layout": asdict(Layout())}
 
 
 DEFAULT_REPO = "https://github.com/mike1208-dev/zee-note"
@@ -87,6 +90,7 @@ def setup(path: Path = DB_PATH) -> None:
             db.executescript("".join(f"drop table if exists {name};" for name in names))
         db.executescript(SCHEMA)
         db.execute(f"pragma user_version = {SAMPLE}")
+        db.execute("insert or ignore into company (id, name) values (1, ?)", (COMPANY,))
         # one report a person, team and day: a report copied again replaces that day's one. Copies saved twice before
         # this rule keep only the newest
         db.execute("delete from reports where id not in (select max(id) from reports group by email, team_id, day)")

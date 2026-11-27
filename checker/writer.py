@@ -101,6 +101,44 @@ class Settings:
     greeting: str = GREETING
 
 
+@dataclass
+class Layout:
+    """
+    What a team sets for the format of its reports. The parts stay the same, so the checks and the trained model still
+    know them; only their names and a few details change. The rules that look for the sections follow the names.
+    """
+
+    done: str = "Yesterday"
+    weekend: str = "Weekend"
+    today: str = "Today"
+    blockers: str = "Blockers"
+    notes: str = "Notes"
+    icons: bool = True
+    hours: bool = True
+    links: bool = True  # full links of PRs and issues when the repo link is known, or just "PR #102"
+    greeting: bool = True
+
+    def sections(self) -> list[list[str]]:
+        return [[self.done, self.weekend], [self.today], [self.blockers, self.notes]]
+
+
+def rules_for_layout(rules: list[dict], layout: Layout) -> list[dict]:
+    """
+    The rules with the team's section names. Without hours in the report, the rule about them is left out.
+    """
+    sections = layout.sections()
+    fitted = []
+    for rule in rules:
+        if rule.get("check") == "required_sections":
+            rule = {**rule, "sections": sections}
+        elif rule.get("check") == "working_hours":
+            if not layout.hours:
+                continue
+            rule = {**rule, "sections": sections[:2]}
+        fitted.append(rule)
+    return fitted
+
+
 def _text(value) -> str:
     return " ".join(value.split()) if isinstance(value, str) else ""
 
@@ -667,14 +705,14 @@ def _links(refs: list[str], repo: str) -> dict[str, str]:
     return links
 
 
-def _task_lines(tasks: list[Task], repo: str = "") -> list[str]:
+def _task_lines(tasks: list[Task], repo: str = "", start: str = "  ") -> list[str]:
     """
     - [issue-1680](its link) ― [CHORE] What was done
       - the full link of the PR ― **Merged**
     """
     repo, lines = repo.strip().rstrip("/"), []
     for project in dict.fromkeys(item.project for item in tasks):
-        indent = "  "
+        indent = start
         if project:
             lines.append(f"{indent}- {project}")
             indent += "  "
@@ -699,26 +737,33 @@ def _task_lines(tasks: list[Task], repo: str = "") -> list[str]:
     return lines
 
 
-def render(draft: Draft, settings: Settings) -> str:
+def render(draft: Draft, settings: Settings, layout: Layout | None = None) -> str:
     """
-    The report in the team's daily report template, in Markdown.
+    The report in the team's daily report template, in Markdown. Without icons a section is a bold line with its tasks
+    under it, since a bullet only counts as a heading with an icon.
     """
+    layout = layout or Layout()
     lines = []
     if reviewer := settings.reviewer.strip().lstrip("@"):
         lines.append(f"@{reviewer}  ")  # the two spaces keep the line break in Markdown
-    lines += [settings.greeting.strip(), ""]
-    lines += [f":date: **[{long_date(settings.day)}]**", ""]
-    for icon, name, tasks, hours in (
-        (":white_check_mark:", settings.first_section, draft.done, settings.done_hours),
-        (":dart:", "Today", draft.plans, settings.plan_hours),
+    lines += [settings.greeting.strip()] if layout.greeting else []
+    lines.append("")
+    icon = (lambda code: f"{code} ") if layout.icons else (lambda code: "")
+    head = "- " if layout.icons else ""
+    item = "  - " if layout.icons else "- "
+    lines += [f"{icon(':date:')}**[{long_date(settings.day)}]**", ""]
+    first = layout.weekend if settings.first_section == "Weekend" else layout.done
+    for code, name, tasks, hours in (
+        (":white_check_mark:", first, draft.done, settings.done_hours),
+        (":dart:", layout.today, draft.plans, settings.plan_hours),
     ):
-        lines.append(f"- {icon} **{name}**" + ("" if hours is None else f" ({_hours(hours)})"))
-        lines += [*(_task_lines(tasks, settings.repo) or [f"  - {TO_FILL_IN[0]}"]), ""]
-    lines.append("- :construction: **Blockers** / :memo: **Notes**")
+        lines.append(f"{head}{icon(code)}**{name}**" + ("" if hours is None or not layout.hours else f" ({_hours(hours)})"))
+        lines += [*(_task_lines(tasks, settings.repo if layout.links else "", "  " if layout.icons else "") or [f"{item}{TO_FILL_IN[0]}"]), ""]
+    lines.append(f"{head}{icon(':construction:')}**{layout.blockers}** / {icon(':memo:')}**{layout.notes}**")
     blockers = draft.blockers or (["None"] if draft.no_blockers else [])
-    lines += [f"  - {_line(text)}" for text in blockers] or [f"  - {TO_FILL_IN[1]}"]
-    lines += [f"  - {_line(text)}" for text in draft.others]
+    lines += [f"{item}{_line(text)}" for text in blockers] or [f"{item}{TO_FILL_IN[1]}"]
+    lines += [f"{item}{_line(text)}" for text in draft.others]
     if draft.overall:
         overall = re.sub(r"^overall[:,]?\s*", "", draft.overall, flags=re.IGNORECASE)
-        lines.append(f"  - Overall: {_line(overall)}")
+        lines.append(f"{item}Overall: {_line(overall)}")
     return "\n".join(lines).strip()

@@ -66,6 +66,7 @@ export default function WritePage() {
   const [text, setText] = useState("");
   const [rendered, setRendered] = useState<Rendered | null>(null);
   const [tab, setTab] = useState<"preview" | "markdown">("preview");
+  const [showRules, setShowRules] = useState(false);
   const [toast, setToast] = useState("");
   const [problems, setProblems] = useState<Partial<Record<Field, string>>>({});
 
@@ -345,16 +346,20 @@ export default function WritePage() {
                     <textarea className="markdown" rows={18} value={text} onChange={(event) => setText(event.target.value)} aria-label="Daily report in Markdown" />
                   )}
                   {toFill && <p className="error" style={{ padding: "0 20px 14px" }}>Fill in the parts in [brackets] before you post it.</p>}
+                  {showRules && (
+                    <div id="rule-list" className="card-body" style={{ borderTop: "1px solid var(--line)" }}>
+                      <RuleList rules={checked.rules} />
+                    </div>
+                  )}
                   <div className="card-foot">
-                    <details className="grow">
-                      <summary className="row small soft" style={{ gap: 10 }}>
-                        <span className="meter" aria-hidden="true"><i style={{ width: `${run.length ? (passed / run.length) * 100 : 0}%` }} /></span>
-                        {checked.summary}
-                      </summary>
-                      <div style={{ marginTop: 12 }}>
-                        <RuleList rules={checked.rules} />
-                      </div>
-                    </details>
+                    {/* a button that looks like one, so it's clear the rules can be opened */}
+                    <button type="button" className="btn sm rules-toggle" aria-expanded={showRules} aria-controls="rule-list" onClick={() => setShowRules(!showRules)}>
+                      <span className={`tag ${passed === run.length ? "ok" : "warn"}`}>
+                        <Icon name={passed === run.length ? "check" : "alert"} size={12} /> {checked.summary}
+                      </span>
+                      {showRules ? "Hide rules" : "Show rules"}
+                      <span className="select-chevron"><Icon name="chevron" size={14} /></span>
+                    </button>
                     <div className="row">
                       {edited && (
                         <button type="button" className="btn" onClick={checkAgain} disabled={checking}>

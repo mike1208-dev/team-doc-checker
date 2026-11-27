@@ -153,7 +153,7 @@ Open http://localhost:3000 and sign in with a sample account. The password of ev
 
 | Account | Role | Sees |
 | --- | --- | --- |
-| `dan@zeenote.ai` | Company Owner (Dan) | Template and rules of every team |
+| `dan@zeenote.ai` | Company Owner (Dan) | Template and rules of every team, and the company name |
 | `illia@zeenote.ai` | Team Manager (Illia) of the Cova, Commity and AI-Training teams | Write report, My reports, Template and rules |
 | `mike@zeenote.ai` | Team Member (Mike) of the Cova and AI-Training teams | Write report, My reports |
 | `admin@zeenote.ai` | ZeeNote Admin | The ZeeNote overview: numbers of each company, never its reports |
@@ -182,8 +182,8 @@ three windows are on, and the address changes each time the tunnel starts.
    cloudflared tunnel --url http://localhost:3000
    ```
 
-Send each teammate their email and the password privately. The sample accounts aren't listed on the sign-in page through the
-link. Everything teammates write goes to Groq with the key in `.env`, and they share its daily limit.
+Send each teammate the password privately. The sign-in page lists the sample emails through the link too, but not where
+the password is set. Everything teammates write goes to Groq with the key in `.env`, and they share its daily limit.
 
 ## Tests
 
