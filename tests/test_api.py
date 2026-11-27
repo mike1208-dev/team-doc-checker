@@ -63,7 +63,7 @@ def test_admin_sees_numbers_only(client, no_ai):
     client.post("/api/reports", headers=mike, json={"team_id": app_team, "day": DAY, "text": "- **Today**"})
     company = client.get("/api/console", headers=admin).json()["companies"][0]
     assert (company["name"], company["owner"], company["people"], company["teams"], company["reports"]) == ("ZeeSpires", "Dan", 7, 4, 1)
-    assert client.get(f"/api/teams/{app_team}/template", headers=admin).status_code == 403
+    assert client.get(f"/api/teams/{app_team}/template", headers=admin).status_code == 404  # in no company, so no team of one
     assert client.get("/api/console", headers=sign_in(client, "dan")).status_code == 403
 
 
@@ -235,3 +235,35 @@ def test_only_the_owner_renames_the_company(client):
     assert client.put("/api/company", headers=dan, json={"name": " ZeeSpires   Labs "}).json() == {"name": "ZeeSpires Labs"}
     assert client.get("/api/me", headers=illia).json()["company"] == "ZeeSpires Labs"
     assert client.get("/api/console", headers=admin).json()["companies"][0]["name"] == "ZeeSpires Labs"
+
+
+def test_companies_see_nothing_of_each_other(client, no_ai):
+    nora, paul, mike = sign_in(client, "nora"), sign_in(client, "paul"), sign_in(client, "mike")
+    me = client.get("/api/me", headers=nora).json()
+    assert me["company"] == "Northwind" and [team["name"] for team in me["teams"]] == ["Sales Team"]
+    sales, cova = team_id(client, nora, "Sales Team"), team_id(client, mike, "Cova Team")
+    for headers, other in ((nora, cova), (paul, cova), (mike, sales)):  # another company's team doesn't exist for them
+        assert client.get(f"/api/teams/{other}/template", headers=headers).status_code == 404
+        assert client.get(f"/api/teams/{other}/settings", headers=headers).status_code == 404
+        assert client.post("/api/reports", headers=headers, json={"team_id": other, "day": DAY, "text": "x"}).status_code == 404
+    report = client.post("/api/reports", headers=mike, json={"team_id": cova, "day": DAY, "text": "- **Today**"}).json()["id"]
+    assert client.get(f"/api/reports/{report}", headers=paul).status_code == 404
+    assert client.put("/api/company", headers=nora, json={"name": "ZeeSpires"}).status_code == 422  # taken
+    client.put("/api/company", headers=nora, json={"name": "Northwind Labs"})
+    assert client.get("/api/me", headers=mike).json()["company"] == "ZeeSpires"  # only her own company is renamed
+
+
+def test_the_admin_adds_a_company(client):
+    admin = sign_in(client, "admin")
+    new = {"name": "Contoso", "owner_name": "Carla", "owner_email": " Carla@Contoso.ai "}
+    assert client.post("/api/companies", headers=sign_in(client, "dan"), json=new).status_code == 403
+    assert client.post("/api/companies", headers=admin, json=new).json()["name"] == "Contoso"
+    assert client.post("/api/companies", headers=admin, json=new).status_code == 422  # the same name
+    assert client.post("/api/companies", headers=admin, json={**new, "name": "Other", "owner_email": "dan@zeenote.ai"}).status_code == 422
+    assert client.post("/api/companies", headers=admin, json={**new, "name": "Other", "owner_email": "carla"}).status_code == 422
+    carla = client.post("/api/login", json={"email": "carla@contoso.ai", "password": db.FAKE_PASSWORD}).json()["token"]
+    me = client.get("/api/me", headers={"Authorization": f"Bearer {carla}"}).json()
+    assert me["owner"] and me["company"] == "Contoso" and me["teams"] == []
+    companies = client.get("/api/console", headers=admin).json()["companies"]
+    assert [(row["name"], row["owner"], row["people"], row["teams"]) for row in companies] == [
+        ("ZeeSpires", "Dan", 7, 4), ("Northwind", "Nora", 3, 1), ("Contoso", "Carla", 1, 0)]

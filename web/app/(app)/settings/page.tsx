@@ -6,8 +6,8 @@ import { useSession } from "@/lib/session";
 import { Icon } from "@/components/Icon";
 import { PageHead } from "@/components/Shell";
 
-// The owner's page for the company itself. Only the name for now
-export default function CompanyPage() {
+// The owner's settings of the company. Only its name for now
+export default function SettingsPage() {
   const { me, changeMe } = useSession();
   const [name, setName] = useState(me.company);
   const [problem, setProblem] = useState("");
@@ -38,7 +38,7 @@ export default function CompanyPage() {
   const changed = name.trim() !== me.company;
   return (
     <>
-      <PageHead title="Company" sub="What everyone in your company sees in ZeeNote." />
+      <PageHead title="Settings" sub="Your company's settings in ZeeNote." />
       <main className="content" style={{ maxWidth: 720 }}>
         <form className="card flush" onSubmit={save} noValidate>
           <div className="card-head">

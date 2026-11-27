@@ -7,10 +7,11 @@ import { Icon } from "@/components/Icon";
 
 // The first version has sample accounts only. Every one uses the same password
 const ACCOUNTS = [
-  ["dan@zeenote.ai", "Company Owner (Dan)"],
-  ["illia@zeenote.ai", "Team Manager (Illia), Cova, Commity and AI-Training teams"],
-  ["mike@zeenote.ai", "Team Member (Mike), Cova and AI-Training teams"],
-  ["admin@zeenote.ai", "ZeeNote Admin"],
+  ["dan@zeenote.ai", "Company Owner (Dan), ZeeSpires"],
+  ["illia@zeenote.ai", "Team Manager (Illia), ZeeSpires: Cova, Commity and AI-Training teams"],
+  ["mike@zeenote.ai", "Team Member (Mike), ZeeSpires: Cova and AI-Training teams"],
+  ["nora@northwind.ai", "Company Owner (Nora), Northwind"],
+  ["admin@zeenote.ai", "ZeeNote Admin, every company"],
 ];
 // Where the password is set is shown only on this computer. Through a shared link, people get the password from you
 const isLocal = () => typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname);

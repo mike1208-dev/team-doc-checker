@@ -25,7 +25,7 @@ export function pagesOf(me: Me): Page[] {
   return [
     ...(writes ? [{ href: "/write", icon: "write" as const, label: "Write report", group }, { href: "/reports", icon: "reports" as const, label: "My reports", group }] : []),
     ...(edits ? [{ href: "/templates", icon: "templates" as const, label: "Template and rules", group }] : []),
-    ...(me.owner ? [{ href: "/company", icon: "building" as const, label: "Company", group }] : []),
+    ...(me.owner ? [{ href: "/settings", icon: "settings" as const, label: "Settings", group }] : []),
   ];
 }
 

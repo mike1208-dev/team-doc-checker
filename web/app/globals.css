@@ -264,3 +264,5 @@ label.check input.switch { width: 34px; }
 .rules-toggle { gap: 8px; padding-left: 4px; }
 .rules-toggle[aria-expanded="true"] .select-chevron { transform: rotate(180deg); }
 .company-name { display: block; font-size: 12px; font-weight: 400; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
+table.companies th, table.companies td { padding: 12px 20px; vertical-align: middle; }
+table.companies tr:last-child td { border-bottom: 0; }

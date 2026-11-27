@@ -128,6 +128,27 @@ class CompanyIn(BaseModel):
         return name
 
 
+class NewCompanyIn(CompanyIn):
+    owner_name: str
+    owner_email: str
+
+    @field_validator("owner_name")
+    @classmethod
+    def person_name(cls, name: str) -> str:
+        name = " ".join(name.split())
+        if not name or len(name) > 60:
+            raise ValueError("Write the owner's name.")
+        return name
+
+    @field_validator("owner_email")
+    @classmethod
+    def email(cls, email: str) -> str:
+        email = email.strip().lower()
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+            raise ValueError("Write the owner's email, such as nora@northwind.ai.")
+        return email
+
+
 class TemplateIn(BaseModel):
     rules: list[Rule]
     layout: LayoutIn = LayoutIn()
@@ -166,9 +187,10 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
 
     def team_role(conn, user, team_id: int) -> str:
         """
-        Owner, Manager or Member for this team, or "" when the person isn't in it.
+        Owner, Manager or Member for this team, or "" when the person isn't in it. A team of another company doesn't
+        exist for them, so nothing shows that it's there.
         """
-        if not conn.execute("select 1 from teams where id = ?", (team_id,)).fetchone():
+        if not conn.execute("select 1 from teams where id = ? and company_id is ?", (team_id, user["company_id"])).fetchone():
             raise HTTPException(404, "This team doesn't exist.")
         if user["owner"]:
             return "Owner"
@@ -217,12 +239,13 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
     @app.get("/api/me")
     def me(user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
         if user["owner"]:
-            teams = [{"id": row["id"], "name": row["name"], "role": "Owner"} for row in conn.execute("select * from teams order by id")]
+            rows = conn.execute("select * from teams where company_id = ? order by id", (user["company_id"],))
+            teams = [{"id": row["id"], "name": row["name"], "role": "Owner"} for row in rows]
         else:
             rows = conn.execute("select teams.id, teams.name, members.role from members join teams on teams.id = team_id where email = ? order by teams.id", (user["email"],))
             teams = [dict(row) for row in rows]
-        company = conn.execute("select name from company").fetchone()["name"]
-        return {"email": user["email"], "name": user["name"], "owner": bool(user["owner"]), "admin": bool(user["admin"]), "teams": teams, "company": company}
+        company = conn.execute("select name from companies where id is ?", (user["company_id"],)).fetchone()
+        return {"email": user["email"], "name": user["name"], "owner": bool(user["owner"]), "admin": bool(user["admin"]), "teams": teams, "company": company["name"] if company else ""}
 
     @app.put("/api/company")
     def rename_company(body: CompanyIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
@@ -231,7 +254,9 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         """
         if not user["owner"]:
             raise HTTPException(403, "Only the company's owner can change its name.")
-        conn.execute("update company set name = ?", (body.name,))
+        if conn.execute("select 1 from companies where name = ? and id != ?", (body.name, user["company_id"])).fetchone():
+            raise HTTPException(422, "Another company already has this name.")
+        conn.execute("update companies set name = ? where id = ?", (body.name, user["company_id"]))
         return {"name": body.name}
 
     @app.get("/api/console")
@@ -241,16 +266,34 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         """
         if not user["admin"]:
             raise HTTPException(403, "Only ZeeNote admins can open the console.")
-        number = lambda sql: conn.execute(sql).fetchone()[0]  # noqa: E731
-        company = {
-            "name": conn.execute("select name from company").fetchone()["name"],
-            "owner": conn.execute("select name from users where owner = 1").fetchone()["name"],
-            "people": number("select count(*) from users where admin = 0"),
-            "teams": number("select count(*) from teams"),
-            "reports": number("select count(*) from reports"),
-            "reports_today": number("select count(*) from reports where date(created_at) = date('now')"),
-        }
-        return {"companies": [company]}
+        rows = conn.execute(
+            """
+            select companies.id, companies.name,
+                (select group_concat(name, ', ') from users where company_id = companies.id and owner = 1) as owner,
+                (select count(*) from users where company_id = companies.id) as people,
+                (select count(*) from teams where company_id = companies.id) as teams,
+                (select count(*) from reports join teams on teams.id = team_id where teams.company_id = companies.id) as reports,
+                (select count(*) from reports join teams on teams.id = team_id
+                    where teams.company_id = companies.id and date(reports.created_at) = date('now')) as reports_today
+            from companies order by companies.id
+            """
+        )
+        return {"companies": [{**dict(row), "owner": row["owner"] or ""} for row in rows]}
+
+    @app.post("/api/companies")
+    def add_company(body: NewCompanyIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+        """
+        A new company with its owner, added by a ZeeNote admin. The owner signs in with the shared password of v1.
+        """
+        if not user["admin"]:
+            raise HTTPException(403, "Only ZeeNote admins can add a company.")
+        if conn.execute("select 1 from companies where name = ?", (body.name,)).fetchone():
+            raise HTTPException(422, "A company with this name already uses ZeeNote.")
+        if conn.execute("select 1 from users where email = ?", (body.owner_email,)).fetchone():
+            raise HTTPException(422, "Someone with this email already uses ZeeNote.")
+        company_id = conn.execute("insert into companies (name) values (?)", (body.name,)).lastrowid
+        conn.execute("insert into users (email, name, company_id, owner) values (?, ?, ?, 1)", (body.owner_email, body.owner_name, company_id))
+        return {"id": company_id, "name": body.name}
 
     @app.post("/api/reports/write")
     def write(body: WriteIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
