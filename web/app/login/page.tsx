@@ -98,7 +98,7 @@ export default function Login() {
               <>ask the person who shared this link for the password</>
             )}
           </p>
-          {ACCOUNTS.map(([address, role]) => (
+          {ACCOUNTS.filter(([address]) => local || !address.startsWith("admin@")).map(([address, role]) => (
             <button key={address} className="link" style={{ textAlign: "left" }} onClick={() => { setEmail(address); setProblems({ ...problems, email: undefined }); }}>
               {address} <span className="soft">· {role}</span>
             </button>

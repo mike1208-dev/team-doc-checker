@@ -220,7 +220,10 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         finally:
             connection.close()
 
-    def signed_in(authorization: str = Header(""), conn: sqlite3.Connection = Depends(database)) -> sqlite3.Row:
+    # "function": the changes are committed before the reply is sent, so a request right after it sees them
+    Database = Depends(database, scope="function")
+
+    def signed_in(authorization: str = Header(""), conn: sqlite3.Connection = Database) -> sqlite3.Row:
         token = authorization.removeprefix("Bearer ").strip()
         user = conn.execute("select users.* from sessions join users using (email) where token = ?", (token,)).fetchone()
         if not token or not user:
@@ -287,21 +290,23 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         }
 
     @app.post("/api/login")
-    def login(body: Login, conn: sqlite3.Connection = Depends(database)):
+    def login(body: Login, conn: sqlite3.Connection = Database):
         user = conn.execute("select * from users where email = ?", (body.email.strip().lower(),)).fetchone()
         if not user or not secrets.compare_digest(body.password.encode(), db.FAKE_PASSWORD.encode()):
             raise HTTPException(401, "Wrong email or password.")
+        if user["admin"] and not db.PASSWORD_SET:
+            raise HTTPException(401, "The ZeeNote admin signs in only with a password set as ZEENOTE_PASSWORD in .env.")
         token = secrets.token_urlsafe(32)
         conn.execute("insert into sessions (token, email) values (?, ?)", (token, user["email"]))
         return {"token": token}
 
     @app.post("/api/logout")
-    def logout(authorization: str = Header(""), conn: sqlite3.Connection = Depends(database)):
+    def logout(authorization: str = Header(""), conn: sqlite3.Connection = Database):
         conn.execute("delete from sessions where token = ?", (authorization.removeprefix("Bearer ").strip(),))
         return {"ok": True}
 
     @app.get("/api/me")
-    def me(user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def me(user=Depends(signed_in), conn: sqlite3.Connection = Database):
         company = conn.execute("select name from companies where id = ?", (user["company_id"],)).fetchone()
         return {
             "email": user["email"], "name": user["name"], "owner": bool(user["owner"]), "admin": bool(user["admin"]),
@@ -309,7 +314,7 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         }
 
     @app.put("/api/company")
-    def rename_company(body: CompanyIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def rename_company(body: CompanyIn, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         """
         Only the company's owner renames it. ZeeNote's admins see the name, but don't change it.
         """
@@ -323,7 +328,7 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return {"name": body.name}
 
     @app.post("/api/teams")
-    def add_team(body: TeamIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def add_team(body: TeamIn, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         """
         A new team of the owner's company, with the built-in template.
         """
@@ -337,12 +342,12 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return {"id": team_id, "name": body.name}
 
     @app.get("/api/teams/{team_id}/people")
-    def team_people(team_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def team_people(team_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         owns_team(conn, user, team_id)
         return people_of(conn, team_id)
 
     @app.put("/api/teams/{team_id}/people")
-    def add_person(team_id: int, body: MemberIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def add_person(team_id: int, body: MemberIn, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         """
         Adds someone to the team, or changes their role. Someone new joins the owner's company and signs in with the
         shared password of v1.
@@ -362,7 +367,7 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return people_of(conn, team_id)
 
     @app.delete("/api/teams/{team_id}/people/{email}")
-    def remove_person(team_id: int, email: str, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def remove_person(team_id: int, email: str, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         """
         Takes someone out of the team. Their reports and their place in the company stay.
         """
@@ -372,7 +377,7 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return people_of(conn, team_id)
 
     @app.get("/api/console")
-    def console(user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def console(user=Depends(signed_in), conn: sqlite3.Connection = Database):
         """
         ZeeNote's own overview, for its admins: numbers only, never a company's reports or notes.
         """
@@ -393,7 +398,7 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return {"companies": [{**dict(row), "owner": row["owner"] or ""} for row in rows]}
 
     @app.post("/api/companies")
-    def add_company(body: NewCompanyIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def add_company(body: NewCompanyIn, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         """
         A new company with its owner, added by a ZeeNote admin. The owner signs in with the shared password of v1.
         """
@@ -411,14 +416,13 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return {"id": company_id, "name": body.name}
 
     @app.post("/api/reports/write")
-    def write(body: WriteIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def write(body: WriteIn, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         in_team(conn, user, body.team_id)
         data = template(conn, body.team_id)
         repo, reviewer = body.repo.strip().rstrip("/"), body.reviewer.strip().lstrip("@")
         if repo and not REPO.fullmatch(repo):
             raise HTTPException(422, "Write a repo link such as https://github.com/acme/app, or leave it empty.")
         mine = {"reviewer": reviewer, "first_section": body.first_section, "done_hours": body.done_hours, "plan_hours": body.plan_hours, "repo": repo, "greeting": body.greeting}
-        conn.execute("insert or replace into settings (email, team_id, data) values (?, ?, ?)", (user["email"], body.team_id, json.dumps(mine)))
         settings = Settings(body.day, reviewer, body.first_section, body.done_hours, body.plan_hours, repo, body.greeting)
         notes = "\n".join([body.notes.rstrip(), *[answer.strip() for answer in body.answers if answer.strip()]])
         try:
@@ -430,10 +434,13 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         known = [term for rule in data["rules"] if rule.get("enabled", True) for term in rule.get("known_terms") or []]
         if terms := unknown_terms(draft, known):
             questions.append("A reader who isn't technical may not know: " + ", ".join(terms))
-        return {"notes": notes, "text": text, "questions": questions, **checked(text, data, questions, body.check_ai, edited=False)}
+        result = {"notes": notes, "day": body.day.isoformat(), "text": text, "questions": questions, **checked(text, data, questions, body.check_ai, edited=False)}
+        # last, after the AI's work: writing locks the database until the reply
+        conn.execute("insert or replace into settings (email, team_id, data) values (?, ?, ?)", (user["email"], body.team_id, json.dumps(mine)))
+        return result
 
     @app.post("/api/reports/check")
-    def check(body: CheckIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def check(body: CheckIn, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         """
         Checks an edited report again. The questions of the first check stay, unless the edits answered them.
         """
@@ -453,7 +460,7 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return markup(body.text)
 
     @app.post("/api/reports")
-    def save(body: ReportIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def save(body: ReportIn, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         in_team(conn, user, body.team_id)
         if not body.text.strip():
             raise HTTPException(422, "The report is empty.")
@@ -468,7 +475,7 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return {"id": report_id, "replaced": replaced}
 
     @app.get("/api/reports")
-    def my_reports(user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def my_reports(user=Depends(signed_in), conn: sqlite3.Connection = Database):
         rows = conn.execute(
             "select reports.id, day, team_id, teams.name as team, text, created_at from reports join teams on teams.id = team_id where email = ? order by day desc, reports.id desc",
             (user["email"],),
@@ -476,7 +483,7 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return [{**dict(row), "text": row["text"][:300]} for row in rows]
 
     @app.get("/api/reports/{report_id}")
-    def one_report(report_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def one_report(report_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         row = conn.execute(
             "select reports.*, teams.name as team from reports join teams on teams.id = team_id where reports.id = ? and email = ?", (report_id, user["email"])
         ).fetchone()
@@ -485,13 +492,13 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return {**dict(row), **markup(row["text"])}
 
     @app.delete("/api/reports/{report_id}")
-    def delete_report(report_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def delete_report(report_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         if not conn.execute("delete from reports where id = ? and email = ?", (report_id, user["email"])).rowcount:
             raise HTTPException(404, "This report doesn't exist.")
         return {"ok": True}
 
     @app.get("/api/teams/{team_id}/settings")
-    def my_settings(team_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def my_settings(team_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         """
         What this person used for the team's last report. The first time, the reviewer is the team's manager.
         """
@@ -506,7 +513,7 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return db.default_settings(manager["name"] if manager else "")
 
     @app.get("/api/teams/{team_id}/template")
-    def get_template(team_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def get_template(team_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         role = team_role(conn, user, team_id)
         if not role:
             raise HTTPException(403, "You aren't in this team.")
@@ -520,18 +527,21 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         return get_template(team_id, user, conn)
 
     @app.put("/api/teams/{team_id}/template")
-    def put_template(team_id: int, body: TemplateIn, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def put_template(team_id: int, body: TemplateIn, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         data = body.model_dump()
+        ids = {rule["id"] for rule in data["rules"]}
         for rule in data["rules"]:
-            if not rule["id"]:  # a new rule of the team gets its ID from the title
-                rule["id"] = "custom_" + (slugify(rule["title"]) or "rule")
+            if not rule["id"]:  # a new rule of the team gets its ID from the title, short enough and not used yet
+                base = "custom_" + (slugify(rule["title"])[:36].strip("-_") or "rule")
+                rule["id"] = next(f"{base}_{n}" if n else base for n in range(len(ids) + 1) if (f"{base}_{n}" if n else base) not in ids)
+                ids.add(rule["id"])
         problems = validate_style(Style("daily_report", "Daily report", data["rules"]))
         if problems:
             raise HTTPException(422, " ".join(problems))
         return save_template(conn, user, team_id, data)
 
     @app.post("/api/teams/{team_id}/template/reset")
-    def reset_template(team_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+    def reset_template(team_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Database):
         return save_template(conn, user, team_id, db.default_template())
 
     return app

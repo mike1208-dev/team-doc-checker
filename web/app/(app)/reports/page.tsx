@@ -13,7 +13,9 @@ const dateOf = (day: string) => new Date(`${day}T00:00`);
 // The first tasks of the report, as one line: "Booking list shows the wrong date · Send an email…"
 function tasksOf(text: string): string {
   const plain = (line: string) => line.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#>]/g, "").replace(/^\s*[-•]\s*/, "").trim();
-  const tasks = text.split("\n").filter((line) => /^\s{2,}[-•]/.test(line)).map(plain).filter(Boolean);
+  const lines = text.split("\n");
+  const nested = lines.filter((line) => /^\s{2,}[-•]/.test(line));
+  const tasks = (nested.length ? nested : lines.filter((line) => /^[-•]\s/.test(line))).map(plain).filter(Boolean); // without icons, tasks aren't indented
   return (tasks.length ? tasks : [plain(text.replace(/\s+/g, " "))]).slice(0, 3).join(" · ");
 }
 
@@ -26,8 +28,8 @@ export default function ReportsPage() {
     api<ReportRow[]>("/reports").then(setRows).catch((e) => setError(e.message));
   }, []);
 
-  // with several teams, the list shows the team chosen in the menu
-  const shown = (rows ?? []).filter((row) => teams.length < 2 || row.team_id === team?.id);
+  // with several teams, the list shows the team chosen in the menu, and the reports of teams the person has left
+  const shown = (rows ?? []).filter((row) => teams.length < 2 || row.team_id === team?.id || !teams.some((item) => item.id === row.team_id));
   const months = [...new Set(shown.map((row) => dateOf(row.day).toLocaleDateString("en-US", { month: "long", year: "numeric" })))];
 
   return (
@@ -64,7 +66,7 @@ export default function ReportsPage() {
                       <span style={{ minWidth: 0 }}>
                         <span className="row" style={{ gap: 8 }}>
                           <b style={{ fontWeight: 500 }}>{date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</b>
-                          {teams.length > 1 && <span className="tag off">{row.team}</span>}
+                          {(teams.length > 1 || row.team_id !== team?.id) && <span className="tag off">{row.team}</span>}
                         </span>
                         <span className="snippet" style={{ display: "block" }}>{tasksOf(row.text)}</span>
                       </span>

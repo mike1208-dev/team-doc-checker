@@ -13,7 +13,8 @@ DAY = "2026-11-27"
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "PASSWORD_SET", True)  # as with a password in .env
     return TestClient(main.create_app(tmp_path / "test.db"))
 
 
@@ -321,3 +322,28 @@ def test_a_name_taken_at_the_same_moment_is_the_same_message():
     with pytest.raises(HTTPException) as caught, main.unique("Another company already has this name."):
         raise sqlite3.IntegrityError("UNIQUE constraint failed: companies.name")
     assert (caught.value.status_code, caught.value.detail) == (422, "Another company already has this name.")
+
+
+def test_the_admin_needs_a_password_of_their_own(client, monkeypatch):
+    monkeypatch.setattr(db, "PASSWORD_SET", False)  # only the default password
+    response = client.post("/api/login", json={"email": "admin@zeenote.ai", "password": db.FAKE_PASSWORD})
+    assert response.status_code == 401 and "ZEENOTE_PASSWORD" in response.json()["detail"]
+    assert client.post("/api/login", json={"email": "mike@zeenote.ai", "password": db.FAKE_PASSWORD}).status_code == 200
+
+
+def test_new_rules_get_short_different_ids(client):
+    illia = sign_in(client, "illia")
+    cova = team_id(client, illia, "Cova Team")
+    data = client.get(f"/api/teams/{cova}/template", headers=illia).json()
+    new = {"id": "", "check": "llm", "title": "Names the client for every client-facing task done this week", "question": "Does it?", "enabled": True}
+    saved = client.put(f"/api/teams/{cova}/template", headers=illia, json={**data, "rules": [*data["rules"], new, new]}).json()
+    ids = [rule["id"] for rule in saved["rules"][-2:]]
+    assert ids[0] != ids[1] and all(len(rule_id) <= 50 and rule_id.startswith("custom_") for rule_id in ids)
+
+
+def test_the_report_says_its_day_and_settings_are_kept(client, no_ai):
+    mike = sign_in(client, "mike")
+    cova = team_id(client, mike, "Cova Team")
+    body = {"team_id": cova, "notes": "fixed the login page", "day": DAY, "reviewer": "Illia", "greeting": "Hi", "check_ai": False}
+    assert client.post("/api/reports/write", headers=mike, json=body).json()["day"] == DAY
+    assert client.get(f"/api/teams/{cova}/settings", headers=mike).json()["greeting"] == "Hi"

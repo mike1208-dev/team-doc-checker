@@ -157,7 +157,7 @@ Open http://localhost:3000 and sign in with a sample account. The password of ev
 | `illia@zeenote.ai` | Team Manager (Illia) of the Cova, Commity and AI-Training teams | Write report, My reports, Template and rules |
 | `mike@zeenote.ai` | Team Member (Mike) of the Cova and AI-Training teams | Write report, My reports |
 | `nora@northwind.ai` | Company Owner (Nora) of Northwind, a second company that sees nothing of ZeeSpires | Template and rules of Northwind's team |
-| `admin@zeenote.ai` | ZeeNote Admin | The ZeeNote overview: numbers of each company, never its reports, and adding a company |
+| `admin@zeenote.ai` | ZeeNote Admin, only with a `ZEENOTE_PASSWORD` set in `.env` | The ZeeNote overview: numbers of each company, never its reports, and adding a company |
 
 The sample company is made the first time the API starts. To start again from nothing, stop the API and delete
 `data/zeenote.db`. The sign-in is for trying the app only: there are no real passwords yet.

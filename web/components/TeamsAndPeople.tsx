@@ -52,8 +52,11 @@ export function TeamsAndPeople({ onDone }: { onDone: (message: string) => void }
     setProblems({});
     setError("");
     try {
-      setPeople(await api<Person[]>(`/teams/${teamId}/people`, { method: "PUT", body: person }));
-      onDone(`${person.name.trim()} is in the ${team?.name} now.`);
+      const now = await api<Person[]>(`/teams/${teamId}/people`, { method: "PUT", body: person });
+      setPeople(now);
+      const added = now.find((who) => who.email === person.email.trim().toLowerCase());
+      const renamed = added && added.name !== person.name.trim() ? ` They're already in ZeeNote as ${added.name}.` : "";
+      onDone(`${added?.name ?? person.name.trim()} is in the ${team?.name} now.${renamed}`);
       setPerson(NOBODY);
     } catch (e) {
       const fields = e instanceof ApiError ? e.fields : {};

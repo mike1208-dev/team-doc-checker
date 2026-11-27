@@ -15,6 +15,7 @@ from checker.writer import GREETING, Layout
 DB_PATH = Path(os.getenv("ZEENOTE_DB", Path(__file__).resolve().parent.parent / "data" / "zeenote.db"))
 # The first version has no real sign-in: every sample account uses this password. Set your own in .env before sharing the app
 FAKE_PASSWORD = os.getenv("ZEENOTE_PASSWORD") or "zeenote"
+PASSWORD_SET = bool(os.getenv("ZEENOTE_PASSWORD"))  # the ZeeNote admin signs in only then
 
 SCHEMA = """
 -- every company that uses ZeeNote. Its people and teams see nothing of the other companies
