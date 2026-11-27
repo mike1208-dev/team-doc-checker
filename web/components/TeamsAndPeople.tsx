@@ -25,8 +25,13 @@ export function TeamsAndPeople({ onDone }: { onDone: (message: string) => void }
 
   useEffect(() => {
     if (!teamId) return;
+    let stale = false; // another team chosen before the reply came
     setPeople(null);
-    api<Person[]>(`/teams/${teamId}/people`).then(setPeople).catch((e) => setError(e.message));
+    setError("");
+    api<Person[]>(`/teams/${teamId}/people`).then((list) => !stale && setPeople(list)).catch((e) => !stale && setError(e.message));
+    return () => {
+      stale = true;
+    };
   }, [teamId]);
 
   async function addTeam(event: React.FormEvent) {

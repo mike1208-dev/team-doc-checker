@@ -9,11 +9,13 @@ import json
 import re
 import secrets
 import sqlite3
+import time
+from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -31,6 +33,8 @@ from checker.writer import GREETING, UNUSED_RULES, Draft, Layout, Settings, Task
 from views.points import points_to_check, split_point  # noqa: E402
 
 REPO = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+")
+SESSION_DAYS = 14  # a sign-in lasts this long
+MOST_TRIES, LOCK_SECONDS = 10, 15 * 60  # wrong passwords for one email before it waits
 
 
 def markup(text: str) -> dict:
@@ -45,36 +49,60 @@ class Login(BaseModel):
     password: str
 
 
+LONGEST_REPORT = 20_000  # characters; a daily report is far shorter
+Answer = Annotated[str, Field(max_length=500)]
+
+
+def near_today(day: date) -> date:
+    if abs((day - date.today()).days) > 366:
+        raise ValueError("Pick a date within a year of today.")
+    return day
+
+
+def one_line(value: str) -> str:
+    return " ".join(value.split())
+
+
 class WriteIn(BaseModel):
     team_id: int
-    notes: str
+    notes: str = Field(max_length=10_000)  # the writer itself takes up to 8,000 and says so
     day: date
     first_section: Literal["Yesterday", "Weekend"] = "Yesterday"
     done_hours: float | None = Field(None, ge=0, le=24)
     plan_hours: float | None = Field(None, ge=0, le=24)
-    reviewer: str = ""
-    repo: str = ""
-    greeting: str = ""
-    answers: list[str] = []  # to the questions about the notes, written as notes
+    reviewer: str = Field("", max_length=60)
+    repo: str = Field("", max_length=200)
+    greeting: str = Field("", max_length=300)
+    answers: list[Answer] = Field([], max_length=50)  # to the questions about the notes, written as notes
     check_ai: bool = True
+
+    _day = field_validator("day")(near_today)
+
+    # on one line: a line break in them would add parts of its own to the report, such as a heading
+    @field_validator("reviewer", "greeting")
+    @classmethod
+    def on_one_line(cls, value: str) -> str:
+        return one_line(value)
 
 
 class CheckIn(BaseModel):
     team_id: int
-    text: str
-    questions: list[str] = []
+    text: str = Field(max_length=LONGEST_REPORT)
+    questions: list[Answer] = Field([], max_length=50)
     check_ai: bool = True
 
 
 class TextIn(BaseModel):
-    text: str
+    text: str = Field(max_length=LONGEST_REPORT)
 
 
 class ReportIn(BaseModel):
     team_id: int
     day: date
-    notes: str = ""
-    text: str
+    notes: str = Field("", max_length=12_000)  # the notes with the answers
+    text: str = Field(max_length=LONGEST_REPORT)
+
+    _day = field_validator("day")(near_today)
 
 
 class Rule(BaseModel, extra="allow"):
@@ -225,7 +253,9 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
 
     def signed_in(authorization: str = Header(""), conn: sqlite3.Connection = Database) -> sqlite3.Row:
         token = authorization.removeprefix("Bearer ").strip()
-        user = conn.execute("select users.* from sessions join users using (email) where token = ?", (token,)).fetchone()
+        user = conn.execute(
+            "select users.* from sessions join users using (email) where token = ? and sessions.created_at > datetime('now', ?)", (token, f"-{SESSION_DAYS} days")
+        ).fetchone()
         if not token or not user:
             raise HTTPException(401, "Please sign in again.")
         return user
@@ -289,11 +319,21 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
             "summary": f"{count(results, PASS)} of {len(results) - not_checked} rules passed" + (f", {not_checked} not checked" if not_checked else ""),
         }
 
+    failures: dict[str, list[float]] = defaultdict(list)  # wrong passwords by email, in this run of the API
+
     @app.post("/api/login")
     def login(body: Login, conn: sqlite3.Connection = Database):
-        user = conn.execute("select * from users where email = ?", (body.email.strip().lower(),)).fetchone()
+        email = body.email.strip().lower()
+        now = time.monotonic()
+        recent = failures[email] = [moment for moment in failures[email] if now - moment < LOCK_SECONDS]
+        if len(recent) >= MOST_TRIES:
+            raise HTTPException(429, "Too many wrong passwords. Wait 15 minutes and try again.")
+        user = conn.execute("select * from users where email = ?", (email,)).fetchone()
         if not user or not secrets.compare_digest(body.password.encode(), db.FAKE_PASSWORD.encode()):
+            recent.append(now)
             raise HTTPException(401, "Wrong email or password.")
+        failures.pop(email, None)
+        conn.execute("delete from sessions where created_at <= datetime('now', ?)", (f"-{SESSION_DAYS} days",))  # old sign-ins
         if user["admin"] and not db.PASSWORD_SET:
             raise HTTPException(401, "The ZeeNote admin signs in only with a password set as ZEENOTE_PASSWORD in .env.")
         token = secrets.token_urlsafe(32)
@@ -374,6 +414,8 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         owns_team(conn, user, team_id)
         if not conn.execute("delete from members where team_id = ? and email = ?", (team_id, email.lower())).rowcount:
             raise HTTPException(404, "They aren't in this team.")
+        if not conn.execute("select 1 from members where email = ?", (email.lower(),)).fetchone():
+            conn.execute("delete from sessions where email = ?", (email.lower(),))  # in no team any more: signed out
         return people_of(conn, team_id)
 
     @app.get("/api/console")
@@ -407,8 +449,12 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         name_taken, email_taken = "A company with this name already uses ZeeNote.", "Someone with this email already uses ZeeNote."
         if conn.execute("select 1 from companies where name = ? collate nocase", (body.name,)).fetchone():
             raise HTTPException(422, name_taken)
-        if conn.execute("select 1 from users where email = ?", (body.owner_email,)).fetchone():
+        taken_by = conn.execute("select * from users where email = ?", (body.owner_email,)).fetchone()
+        if taken_by and (taken_by["owner"] or taken_by["admin"] or conn.execute("select 1 from reports where email = ?", (body.owner_email,)).fetchone()):
             raise HTTPException(422, email_taken)
+        if taken_by:  # added to a team by another company's owner, but never used: the address goes to its real owner
+            for table in ("members", "settings", "sessions", "users"):
+                conn.execute(f"delete from {table} where email = ?", (body.owner_email,))
         with unique(name_taken):
             company_id = conn.execute("insert into companies (name) values (?)", (body.name,)).lastrowid
         with unique(email_taken):
@@ -477,10 +523,11 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
     @app.get("/api/reports")
     def my_reports(user=Depends(signed_in), conn: sqlite3.Connection = Database):
         rows = conn.execute(
-            "select reports.id, day, team_id, teams.name as team, text, created_at from reports join teams on teams.id = team_id where email = ? order by day desc, reports.id desc",
+            "select reports.id, day, team_id, teams.name as team, substr(text, 1, 300) as text, created_at"
+            " from reports join teams on teams.id = team_id where email = ? order by day desc, reports.id desc",
             (user["email"],),
         )
-        return [{**dict(row), "text": row["text"][:300]} for row in rows]
+        return [dict(row) for row in rows]
 
     @app.get("/api/reports/{report_id}")
     def one_report(report_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Database):

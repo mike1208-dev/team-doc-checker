@@ -13,6 +13,7 @@ huggingface-hub==2.4.0    # downloads the local model
 httpx==0.28.1          # Supabase REST API (rule database)
 fastapi==0.165.0       # the web app's API (api/)
 uvicorn==0.54.0        # runs the API
+pydantic==2.14.4       # checks what the API is sent (api/main.py uses it directly)
 pdfplumber==0.11.10    # read .pdf
 python-docx==1.2.0     # read .docx
 

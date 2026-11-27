@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Checked, type Layout, type MySettings, type RuleResult, type SavedTemplate, type Written } from "@/lib/api";
 import { copyReport } from "@/lib/copy";
 import { useSession } from "@/lib/session";
@@ -70,6 +70,10 @@ export default function WritePage() {
   const [toast, setToast] = useState("");
   const [problems, setProblems] = useState<Partial<Record<Field, string>>>({});
   const [layout, setLayout] = useState<Layout | null>(null); // the team's format: which settings its reports use
+  const [saving, setSaving] = useState(false);
+  // the team on screen now: a reply for a team that's no longer chosen is dropped, so it never shows under another team
+  const teamNow = useRef<number | undefined>(undefined);
+  teamNow.current = team?.id;
 
   // Each team's report starts from what this person used last time
   useEffect(() => {
@@ -177,8 +181,10 @@ export default function WritePage() {
     setError("");
     setWritten(null);
     setChecked(null);
+    const forTeam = team!.id;
     try {
       const result = await writeReport([], true);
+      if (teamNow.current !== forTeam) return;
       if (JSON.stringify(result.asks) !== JSON.stringify(asked?.asks)) setAnswers({}); // the same questions keep their answers
       setAsked(result.points.length ? result : null);
       if (!result.points.length) show(result);
@@ -189,7 +195,7 @@ export default function WritePage() {
           card?.querySelector<HTMLElement>("input, [role=combobox]")?.focus({ preventScroll: true });
         });
     } catch (e) {
-      setError((e as Error).message);
+      if (teamNow.current === forTeam) setError((e as Error).message);
     } finally {
       setBusy("");
     }
@@ -201,10 +207,12 @@ export default function WritePage() {
     setError("");
     setWritten(null);
     setChecked(null);
+    const forTeam = team!.id;
     try {
-      show(withEarlierRules(await writeReport(answersAsNotes(asked!.asks, answers), false), asked!));
+      const result = await writeReport(answersAsNotes(asked!.asks, answers), false);
+      if (teamNow.current === forTeam) show(withEarlierRules(result, asked!));
     } catch (e) {
-      setError((e as Error).message);
+      if (teamNow.current === forTeam) setError((e as Error).message);
     } finally {
       setBusy("");
     }
@@ -212,16 +220,20 @@ export default function WritePage() {
 
   async function checkAgain() {
     setChecking(true);
+    const forTeam = team!.id;
     try {
-      setChecked(await api<Checked>("/reports/check", { body: { team_id: team!.id, text, questions: written!.questions } }));
+      const result = await api<Checked>("/reports/check", { body: { team_id: forTeam, text, questions: written!.questions } });
+      if (teamNow.current === forTeam) setChecked(result);
     } catch (e) {
-      setToast((e as Error).message);
+      if (teamNow.current === forTeam) setToast((e as Error).message);
     } finally {
       setChecking(false);
     }
   }
 
   async function copyAndSave() {
+    if (saving) return; // a second click while saving would report the new report as "updated"
+    setSaving(true);
     // copy first, while the click still allows it, then save
     const fresh = rendered?.text === text ? rendered : null;
     const copied = await copyReport({ text, html: fresh?.html, slack: fresh?.slack });
@@ -231,6 +243,8 @@ export default function WritePage() {
       setToast(copied ? `Copied. Paste it into Slack. ${kept}` : `${kept} This browser didn't allow copying, so copy it from Edit.`);
     } catch (e) {
       setToast(`${copied ? "Copied" : "Not copied"}, but not saved: ${(e as Error).message}`);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -379,8 +393,8 @@ export default function WritePage() {
                           <Icon name="refresh" size={14} /> {checking ? "Checking…" : "Check again"}
                         </button>
                       )}
-                      <button type="button" className="btn main" onClick={copyAndSave}>
-                        <Icon name="copy" size={14} /> Copy for Slack
+                      <button type="button" className="btn main" onClick={copyAndSave} disabled={saving}>
+                        <Icon name="copy" size={14} /> {saving ? "Saving…" : "Copy for Slack"}
                       </button>
                     </div>
                   </div>
@@ -389,7 +403,7 @@ export default function WritePage() {
             </section>
           </div>
 
-          <aside className="card stack">
+          <aside className="card stack" onKeyDown={(event) => event.key === "Enter" && (event.target as HTMLElement).tagName === "INPUT" && event.preventDefault()}>
             <div>
               <h2>Report settings</h2>
               <p className="soft small">All fields are required. ZeeNote keeps them for your next report.{layout && (!usesHours || !usesGreeting) ? " Your team's template leaves the others out." : ""}</p>

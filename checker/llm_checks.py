@@ -110,7 +110,8 @@ def default_client(model: str = DEFAULT_MODEL):
         return local_model.get_client()
     from groq import Groq
 
-    return Groq()  # reads GROQ_API_KEY
+    # reads GROQ_API_KEY. A short wait and one retry, so a slow service doesn't hold a report for minutes
+    return Groq(timeout=20, max_retries=1)
 
 
 def error_text(error: Exception) -> str:
@@ -141,7 +142,9 @@ def llm_check(text: str, rule: dict, model: str = DEFAULT_MODEL, client=None) ->
     rule.known_terms: terms that are never a problem, so a fail that is only about them becomes a pass.
     """
     truncated = len(text) > MAX_CHARS
-    prompt = PROMPT.format(question=rule.get("question", rule.get("title", "")), text=text[:MAX_CHARS])
+    # the document is in triple quotes, so triple quotes in it could end it early and add orders of their own
+    unquoted = lambda value: str(value).replace('"""', "'''")  # noqa: E731
+    prompt = PROMPT.format(question=unquoted(rule.get("question", rule.get("title", ""))), text=unquoted(text[:MAX_CHARS]))
     try:
         client = client or default_client(model)
         response = client.chat.completions.create(

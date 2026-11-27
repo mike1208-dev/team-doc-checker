@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { api, ApiError, getToken, setToken, type Me, type Team } from "./api";
+import { api, ApiError, getToken, setToken, TOKEN, type Me, type Team } from "./api";
 import type { IconName } from "@/components/Icon";
 
 const TEAM = "zeenote-team";
@@ -70,6 +70,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         } else setError(e.message);
       });
   }, [router]);
+
+  // Signing out or in as someone else in another tab: this tab follows, so it never acts with another person's sign-in
+  useEffect(() => {
+    const follow = (event: StorageEvent) => {
+      if (event.key === TOKEN && event.newValue !== event.oldValue) location.replace(event.newValue ? "/write" : "/login");
+    };
+    window.addEventListener("storage", follow);
+    return () => window.removeEventListener("storage", follow);
+  }, []);
 
   const chooseTeam = useCallback((id: number) => {
     setTeamId(id);

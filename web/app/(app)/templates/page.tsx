@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Layout, type Rule, type SavedTemplate, type Template } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { Icon } from "@/components/Icon";
@@ -16,6 +16,9 @@ const SWITCHES: [keyof Layout, string, string][] = [
   ["links", "Full links", "Links to the PRs and issues, or just “PR #102”"],
   ["greeting", "Greeting", "Each person's greeting under the reviewer"],
 ];
+
+// Edits not saved yet, by team, so switching teams in the menu doesn't lose them. Kept until the page is reloaded
+const unsaved = new Map<number, Template>();
 
 // Cleans what the form allows while typing, such as an empty line in the known terms
 function forSaving(data: Template): Template {
@@ -35,6 +38,9 @@ export default function TemplatesPage() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [newRule, setNewRule] = useState({ title: "", question: "" });
+  const [loadedFor, setLoadedFor] = useState(0); // the team whose template the page shows
+  const teamNow = useRef<number | undefined>(undefined);
+  teamNow.current = team?.id;
 
   function use(result: SavedTemplate) {
     setSaved(result);
@@ -48,8 +54,40 @@ export default function TemplatesPage() {
     setRules(null);
     setLayout(null);
     setError("");
-    api<SavedTemplate>(`/teams/${team.id}/template`).then(use).catch((e) => setError(e.message));
+    let stale = false;
+    api<SavedTemplate>(`/teams/${team.id}/template`)
+      .then((result) => {
+        if (stale) return;
+        use(result);
+        const kept = unsaved.get(team.id);
+        if (kept) {
+          setRules(kept.rules);
+          setLayout(kept.layout);
+        }
+        setLoadedFor(team.id);
+      })
+      .catch((e) => !stale && setError(e.message));
+    return () => {
+      stale = true;
+    };
   }, [team]);
+
+  // Only once the team's own template is shown, so one team's edits are never kept as another's
+  useEffect(() => {
+    if (!team || loadedFor !== team.id || !saved || !rules || !layout) return;
+    const now = forSaving({ rules, layout });
+    if (JSON.stringify(now) === JSON.stringify({ rules: saved.rules, layout: saved.layout })) unsaved.delete(team.id);
+    else unsaved.set(team.id, { rules, layout });
+  }, [team, loadedFor, saved, rules, layout]);
+
+  // Leaving or reloading the page with edits not saved asks first
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (unsaved.size) event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
 
   // The preview is the real report builder on a made-up report, a moment after the last change
   useEffect(() => {
@@ -71,11 +109,14 @@ export default function TemplatesPage() {
   async function save(path: string, body?: Template) {
     setBusy(true);
     setError("");
+    const forTeam = team!.id, name = team!.name;
     try {
-      use(await api<SavedTemplate>(path, { method: body ? "PUT" : "POST", body }));
-      setToast(`Saved. New reports of the ${team!.name} use it now.`);
+      const result = await api<SavedTemplate>(path, { method: body ? "PUT" : "POST", body });
+      unsaved.delete(forTeam);
+      if (teamNow.current === forTeam) use(result);
+      setToast(`Saved. New reports of the ${name} use it now.`);
     } catch (e) {
-      setError((e as Error).message);
+      if (teamNow.current === forTeam) setError((e as Error).message);
     } finally {
       setBusy(false);
     }

@@ -1,7 +1,12 @@
+import os
 import sqlite3
+import tempfile
 from datetime import date
 
 import pytest
+
+# Loading the API sets up its database, so the tests point it at a throwaway one first, never at data/zeenote.db
+os.environ["ZEENOTE_DB"] = os.path.join(tempfile.mkdtemp(), "import.db")
 
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
@@ -9,7 +14,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from api import db, main  # noqa: E402
 from checker.writer import Draft, Task  # noqa: E402
 
-DAY = "2026-11-27"
+DAY = date.today().isoformat()  # a report must be within a year of today
 
 
 @pytest.fixture
@@ -287,7 +292,7 @@ def test_the_owner_sets_up_teams_and_people(client):
     cova = team_id(client, sign_in(client, "dan"), "Cova Team")
     assert client.get(f"/api/teams/{cova}/people", headers=carla).status_code == 404  # another company's team
     assert client.delete(f"/api/teams/{team['id']}/people/raj@contoso.ai", headers=carla).json() == []
-    assert client.get("/api/me", headers=raj).json()["teams"] == []
+    assert client.get("/api/me", headers=raj).status_code == 401  # in no team any more: signed out
 
 
 def test_names_differ_by_more_than_capitals(client):
@@ -347,3 +352,63 @@ def test_the_report_says_its_day_and_settings_are_kept(client, no_ai):
     body = {"team_id": cova, "notes": "fixed the login page", "day": DAY, "reviewer": "Illia", "greeting": "Hi", "check_ai": False}
     assert client.post("/api/reports/write", headers=mike, json=body).json()["day"] == DAY
     assert client.get(f"/api/teams/{cova}/settings", headers=mike).json()["greeting"] == "Hi"
+
+
+def test_many_wrong_passwords_wait(client):
+    for _ in range(main.MOST_TRIES):
+        assert client.post("/api/login", json={"email": "mike@zeenote.ai", "password": "guess"}).status_code == 401
+    assert client.post("/api/login", json={"email": "mike@zeenote.ai", "password": db.FAKE_PASSWORD}).status_code == 429
+    assert client.post("/api/login", json={"email": "dan@zeenote.ai", "password": db.FAKE_PASSWORD}).status_code == 200  # others aren't held
+
+
+def test_a_sign_in_lasts_two_weeks(client):
+    mike = sign_in(client, "mike")
+    with db.connect(client.app.state.db_path) as conn:
+        conn.execute("update sessions set created_at = datetime('now', '-15 days')")
+    assert client.get("/api/me", headers=mike).status_code == 401
+
+
+def test_a_rule_that_could_freeze_the_app_isnt_saved(client):
+    illia = sign_in(client, "illia")
+    cova = team_id(client, illia, "Cova Team")
+    data = client.get(f"/api/teams/{cova}/template", headers=illia).json()
+    bad = [{"id": "", "check": "pattern", "title": "Words", "pattern": r"^(\w+\s?)+$", "enabled": True},
+           {"id": "", "check": "pattern", "title": "Odd", "pattern": "x", "must": "never", "enabled": True}]
+    for rule in bad:
+        assert client.put(f"/api/teams/{cova}/template", headers=illia, json={**data, "rules": [*data["rules"], rule]}).status_code == 422
+    many = [{"id": "", "check": "llm", "title": f"Rule {n}", "question": "Is it fine?", "enabled": True} for n in range(10)]
+    assert client.put(f"/api/teams/{cova}/template", headers=illia, json={**data, "rules": [*data["rules"], *many]}).status_code == 422
+
+
+def test_sizes_and_dates_have_limits(client, no_ai):
+    mike = sign_in(client, "mike")
+    cova = team_id(client, mike, "Cova Team")
+    body = {"team_id": cova, "notes": "fixed the login page", "day": DAY, "check_ai": False}
+    assert client.post("/api/reports/write", headers=mike, json={**body, "notes": "x" * 10_001}).status_code == 422
+    assert client.post("/api/reports/write", headers=mike, json={**body, "day": "9999-12-31"}).status_code == 422
+    assert client.post("/api/reports", headers=mike, json={"team_id": cova, "day": DAY, "text": "x" * 20_001}).status_code == 422
+    # a line break in the reviewer or greeting can't add a heading of its own
+    text = client.post("/api/reports/write", headers=mike, json={**body, "reviewer": "Sam\n\n- **Yesterday** (8 hours)", "greeting": "Hi\nthere"}).json()["text"]
+    assert text.startswith("@Sam - **Yesterday** (8 hours)  \nHi there")
+
+
+def test_an_email_never_used_goes_to_its_real_owner(client):
+    dan, admin = sign_in(client, "dan"), sign_in(client, "admin")
+    cova = team_id(client, dan, "Cova Team")
+    client.put(f"/api/teams/{cova}/people", headers=dan, json={"name": "Ceo", "email": "ceo@bigcorp.ai"})
+    new = {"name": "BigCorp", "owner_name": "Ceo", "owner_email": "ceo@bigcorp.ai"}
+    assert client.post("/api/companies", headers=admin, json=new).status_code == 200
+    me = client.post("/api/login", json={"email": "ceo@bigcorp.ai", "password": db.FAKE_PASSWORD}).json()["token"]
+    assert client.get("/api/me", headers={"Authorization": f"Bearer {me}"}).json()["company"] == "BigCorp"
+    assert "ceo@bigcorp.ai" not in [person["email"] for person in client.get(f"/api/teams/{cova}/people", headers=dan).json()]
+
+
+def test_a_restored_database_is_kept(tmp_path):
+    path = tmp_path / "restored.db"
+    db.setup(path)
+    with db.connect(path) as conn:
+        conn.execute("insert into companies (name) values ('Contoso')")
+        conn.execute("pragma user_version = 0")  # as a dump restored with .dump loses it
+    db.setup(path)
+    with db.connect(path) as conn:
+        assert conn.execute("select count(*) from companies where name = 'Contoso'").fetchone()[0] == 1

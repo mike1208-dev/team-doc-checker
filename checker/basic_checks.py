@@ -5,7 +5,16 @@ Each check takes (text, rule) and returns a CheckResult. Register new ones in CH
 
 import re
 
-from checker.result import FAIL, PASS, WARN, CheckResult
+from checker.result import FAIL, PASS, SKIP, WARN, CheckResult
+
+# A pattern with a repeated group that repeats inside, such as (a+)+ or (\w+\s?)+, can take minutes on one line and
+# freeze the whole app, so it's refused when saved and never run. A fixed count, as in (\.\d{1,3}){3}, is fine
+NESTED = re.compile(r"\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)(?:[+*]|\{\d+,\d*\})")
+LONGEST_PATTERN = 200
+
+
+def risky_pattern(pattern: str) -> bool:
+    return len(pattern) > LONGEST_PATTERN or bool(NESTED.search(pattern))
 
 # (name, pattern, status). Known token formats are a FAIL; "password: ..." style lines are only a WARN
 SECRET_PATTERNS = [
@@ -227,6 +236,8 @@ def pattern(text: str, rule: dict) -> CheckResult:
     rule.must: "match" (default, it must appear somewhere) or "not_match" (it must not appear).
     rule.label: what the pattern means, used in the message.
     """
+    if risky_pattern(rule.get("pattern", "")):
+        return CheckResult.from_rule(rule, SKIP, message="This pattern could take too long to check. Ask a manager to simplify it.")
     regex = re.compile(rule.get("pattern", ""), re.MULTILINE)
     label = rule.get("label") or f"text matching {rule.get('pattern')}"
     if rule.get("must", "match") == "not_match":

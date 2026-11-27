@@ -1,6 +1,6 @@
 // Calls to the ZeeNote API (api/main.py). The sign-in token is kept in this browser.
 
-const TOKEN = "zeenote-token";
+export const TOKEN = "zeenote-token";
 
 export type Role = "Owner" | "Manager" | "Member";
 export type Team = { id: number; name: string; role: Role };
@@ -62,6 +62,11 @@ export async function api<T>(path: string, options: { method?: string; body?: un
     throw new ApiError("Can't reach the ZeeNote API. Is it running?", 0);
   }
   const data = await response.json().catch(() => null);
+  if (response.status === 401 && path !== "/login" && typeof window !== "undefined") {
+    // signed out, maybe in another tab: back to signing in, from any page
+    setToken("");
+    window.location.replace("/login");
+  }
   if (!response.ok) {
     const detail = data?.detail;
     // FastAPI lists the wrong fields when the body doesn't fit

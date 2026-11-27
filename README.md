@@ -130,7 +130,7 @@ reports a day per model, shared by everyone with the same key. If the limit is u
 
 ## Run the web app (v1)
 
-It has two parts, each in its own PowerShell window. Install once:
+It has two parts, each in its own PowerShell window. It needs Python 3.11 and Node.js 20.9 or newer. Install once:
 
 ```powershell
 pip install -r requirements.txt   # adds FastAPI and Uvicorn
@@ -185,6 +185,16 @@ three windows are on, and the address changes each time the tunnel starts.
 
 Send each teammate the password privately. The sign-in page lists the sample emails through the link too, but not where
 the password is set. Everything teammates write goes to Groq with the key in `.env`, and they share its daily limit.
+
+Limits to know:
+
+- **One password for everyone.** v1 has no real accounts: every sample person, in every company, signs in with the
+  same `ZEENOTE_PASSWORD`. Share the link only with people you trust, and change the password after a trial. A sign-in
+  lasts two weeks, and ten wrong passwords for one email make it wait 15 minutes. The ZeeNote admin can sign in only when
+  `ZEENOTE_PASSWORD` is set.
+- `ZEENOTE_API_URL` (where the web app finds the API) is read by `npm run build`, not by `npm start`. Set it before building.
+- A Cloudflare quick tunnel cuts a request after about 100 seconds. If the AI service is slow, writing a report through the
+  link can fail with "Something went wrong (524)"; trying again usually works.
 
 ## Tests
 

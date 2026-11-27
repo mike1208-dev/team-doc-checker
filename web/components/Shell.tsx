@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { pagesOf, roleName, useSession } from "@/lib/session";
 import { Icon } from "@/components/Icon";
 import { Select } from "@/components/Select";
@@ -12,6 +12,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const { me, team, teams, chooseTeam, signOut } = useSession();
   const path = usePathname();
   const [open, setOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const side = useRef<HTMLElement>(null);
+
+  // The menu over the page on a phone: Escape closes it, focus goes into it and back, and the page behind doesn't scroll
+  useEffect(() => {
+    if (!open) return;
+    side.current?.querySelector<HTMLElement>("a, button")?.focus();
+    document.body.style.overflow = "hidden";
+    const close = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
+    document.addEventListener("keydown", close);
+    const button = menuButton.current;
+    return () => {
+      document.body.style.overflow = "";
+      document.removeEventListener("keydown", close);
+      button?.focus();
+    };
+  }, [open]);
   const pages = pagesOf(me);
   const groups = [...new Set(pages.map((page) => page.group))];
   // the owner chooses a team only where the page is about one team; the others in several teams on every page
@@ -20,7 +37,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="shell">
       {open && <div className="scrim" onClick={() => setOpen(false)} aria-hidden="true" />}
-      <nav className={`side ${open ? "open" : ""}`} aria-label="Menu">
+      <nav ref={side} className={`side ${open ? "open" : ""}`} aria-label="Menu">
         <div className="brand">
           <img src="/zeenote-mark.png" alt="" />
           <span style={{ minWidth: 0 }}>
@@ -67,7 +84,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </nav>
       <div className="panel">
         <div className="mobile-bar">
-          <button className="btn icon" onClick={() => setOpen(!open)} aria-expanded={open} aria-label="Menu">
+          <button ref={menuButton} className="btn icon" onClick={() => setOpen(!open)} aria-expanded={open} aria-label="Menu">
             <Icon name="menu" />
           </button>
           <span className="brand" style={{ padding: 0 }}>

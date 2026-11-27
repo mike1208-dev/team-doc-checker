@@ -258,7 +258,8 @@ def extract(notes: str, model: str = llm_checks.DEFAULT_MODEL, client=None, day:
         raise WriterError(f"The notes are too long ({len(notes)} characters). The limit is {MAX_CHARS}.")
     if basic_checks.no_secrets(notes, {}).status != PASS:
         raise WriterError("The notes may contain a key or password, so they weren't sent to the AI service. Remove it and try again.")
-    prompt = PROMPT.format(notes=notes, **_days(day or date.today(), first_section))
+    # triple quotes in the notes would end them early in the prompt
+    prompt = PROMPT.format(notes=notes.replace('"""', "'''"), **_days(day or date.today(), first_section))
     try:
         client = client or llm_checks.default_client(model)
         data = _ask(client, model, prompt)
@@ -610,7 +611,9 @@ def check_facts(draft: Draft, notes: str, day: date, first_section: str = "Yeste
     for part in statuses.sentences(notes):
         is_status = re.match(r"(?i)\W*(?:both|all|no|not|nothing|none|blockers?\W+no(?:ne)?)\b", part) and len(part.split()) <= 5
         own = statuses.words(part) - SMALL_WORDS
-        if draft.reviewer.lower().strip(" @") in part.lower() or draft.report_date.lower() in part.lower():
+        # an empty reviewer or date is in every text, so each is only looked for when there is one
+        reviewer, report_date = draft.reviewer.lower().strip(" @"), draft.report_date.lower().strip()
+        if (reviewer and reviewer in part.lower()) or (report_date and report_date in part.lower()):
             own -= SETTINGS_WORDS | statuses.words(draft.reviewer) | statuses.words(draft.report_date)  # "@Sam please check"
         if _is_japanese(part) or is_status or len(own) < 2:
             continue
@@ -685,7 +688,7 @@ def _line(text: str) -> str:
     """
     Starts with a capital letter, except for names such as iOS, and has no period at the end.
     """
-    text = text.rstrip(" .")
+    text = text.replace("**", "").rstrip(" .")  # a lone ** would turn the rest of the line, and its status, bold
     return text[:1].upper() + text[1:] if re.match(r"[a-z]+\b", text) else text
 
 

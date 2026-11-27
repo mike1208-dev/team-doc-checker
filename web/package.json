@@ -1,6 +1,7 @@
 {
   "name": "zeenote-web",
   "private": true,
+  "engines": { "node": ">=20.9" },
   "version": "0.1.0",
   "scripts": {
     "dev": "next dev",

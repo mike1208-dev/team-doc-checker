@@ -211,3 +211,33 @@ def test_draft_style_from_rule_document():
     assert calls[0]["max_completion_tokens"] == 1000
     assert validate_style(style) == []
     assert calls[0]["response_format"] == {"type": "json_object"}
+
+
+def test_a_pattern_that_could_freeze_the_app_is_refused_and_never_run():
+    rule = {"id": "words", "check": "pattern", "pattern": r"^(\w+\s?)+$", "must": "not_match"}
+    assert any("too long to check" in problem for problem in validate_style(Style("t", "Test", [rule])))
+    assert pattern("a" * 40 + "!", rule).status == SKIP  # an older saved rule isn't run either
+    ip = {"id": "ip", "check": "pattern", "pattern": r"\b\d{1,3}(\.\d{1,3}){3}\b"}
+    assert validate_style(Style("t", "Test", [ip])) == []  # a fixed count is fine
+
+
+def test_must_and_ids_are_checked_exactly():
+    odd = {"id": "x", "check": "pattern", "pattern": "x", "must": "never"}
+    assert any("'must'" in problem for problem in validate_style(Style("t", "Test", [odd])))
+    assert any("ID must" in problem for problem in validate_style(Style("t", "Test", [{"id": "abc\n", "check": "llm", "question": "q"}])))
+
+
+def test_after_the_ai_limit_the_other_ai_rules_dont_ask_again():
+    class Limited:
+        calls = 0
+
+        def create(self, **kwargs):
+            Limited.calls += 1
+            error = Exception("Rate limit reached")
+            error.status_code = 429
+            raise error
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Limited()))
+    rules = [{"id": f"r{n}", "check": "llm", "question": "Is it fine?"} for n in range(4)]
+    results = run_checks("Some report", Style("t", "Test", rules), client=client)
+    assert Limited.calls == 1 and all(result.status == SKIP and "limit" in result.message for result in results)

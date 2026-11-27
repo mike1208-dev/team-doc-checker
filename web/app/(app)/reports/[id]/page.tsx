@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Report } from "@/lib/api";
 import { copyReport } from "@/lib/copy";
 import { useSession } from "@/lib/session";
@@ -19,6 +19,18 @@ export default function ReportPage() {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const router = useRouter();
+  const deleteButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(""), 3000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  function cancelDelete() {
+    setConfirming(false);
+    setTimeout(() => deleteButton.current?.focus()); // back where the person was, once the button is shown again
+  }
 
   useEffect(() => {
     api<Report>(`/reports/${id}`).then(setReport).catch((e) => setError(e.message));
@@ -28,7 +40,6 @@ export default function ReportPage() {
     if (!report) return;
     const copied = await copyReport(report);
     setToast(copied ? "Copied. Paste it into Slack." : "This browser didn't allow copying.");
-    setTimeout(() => setToast(""), 3000);
   }
 
   async function remove() {
@@ -51,7 +62,7 @@ export default function ReportPage() {
       <PageHead title={report ? day : "Report"} sub={<Link href="/reports" className="row" style={{ gap: 4, display: "inline-flex" }}><Icon name="back" size={13} /> My reports</Link>}>
         {report && !confirming && (
           <>
-            <button className="btn ghost danger" onClick={() => setConfirming(true)}>
+            <button ref={deleteButton} className="btn ghost danger" onClick={() => setConfirming(true)}>
               <Icon name="trash" size={14} /> Delete
             </button>
             <button className="btn main" onClick={copy}>
@@ -63,7 +74,7 @@ export default function ReportPage() {
         {report && confirming && (
           <div className="confirm" role="alert">
             <span>Delete this report? This can&apos;t be undone.</span>
-            <button className="btn sm" onClick={() => setConfirming(false)} disabled={deleting} autoFocus>
+            <button className="btn sm" onClick={cancelDelete} disabled={deleting} autoFocus>
               Cancel
             </button>
             <button className="btn sm danger-solid" onClick={remove} disabled={deleting}>

@@ -98,8 +98,10 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
 
 def setup(path: Path = DB_PATH) -> None:
     with connect(path) as db:
-        if db.execute("pragma table_info(users)").fetchone() and db.execute("pragma user_version").fetchone()[0] < KEPT_FROM:
-            # the first versions, with one sample company: start again
+        columns = {row[1] for row in db.execute("pragma table_info(users)")}
+        if columns and "company_id" not in columns:
+            # the first versions, with one sample company and nothing real: start again. Not by the version number, which a
+            # database restored from a dump doesn't keep
             names = ("sessions", "reports", "settings", "templates", "members", "teams", "users", "company", "companies")
             db.executescript("".join(f"drop table if exists {name};" for name in names))
         db.executescript(SCHEMA)
