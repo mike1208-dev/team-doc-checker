@@ -82,3 +82,8 @@ def test_statuses_of_tasks_without_numbers(notes, task, status, expected):
 
 def test_numbers_without_a_status_are_known_too():
     assert by_number("issue 5 and pr 6").keys() == {"5", "6"} and not by_number("issue 5")["5"].said
+
+
+def test_an_answer_at_the_end_gives_the_status():
+    notes = "practiced the project presentation\ntoday: add validation\nPracticed the project presentation: In progress"
+    assert check("In progress", [], "Practiced the project presentation", notes) == "ok"

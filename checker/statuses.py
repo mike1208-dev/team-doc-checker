@@ -192,7 +192,7 @@ def _of_task(task: str, notes: str) -> Evidence:
     if not parts:
         return Evidence()
     scores = [len(same_words(task, part)) for part in parts]
-    best = scores.index(max(scores))
+    best = len(scores) - 1 - scores[::-1].index(max(scores))  # of two as alike, the later one: an answer or a correction
     if not scores[best]:
         return Evidence()
     text = parts[best]

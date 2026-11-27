@@ -487,7 +487,7 @@ def check_facts(draft: Draft, notes: str, day: date, first_section: str = "Yeste
 
     # Statuses: the AI's one is kept only if the notes support it
     known = statuses.by_number(notes)
-    unclear, conflicts = [], []
+    unclear, unclear_prs, conflicts = [], [], []
     names = {name.lower(): name for name in statuses.WORDS}
     for item in draft.done:
         pulls = [ref for ref in _links(item.refs, "") if "/issues/" not in ref]
@@ -511,12 +511,13 @@ def check_facts(draft: Draft, notes: str, day: date, first_section: str = "Yeste
             else:
                 item.status = status
             if not status and found != "conflict":
-                unclear.append(" ".join(filter(None, (item.task or (f"issue-{item.issue}" if item.issue else ""), f"({ref})" if len(pulls) > 1 else ""))) or ref)
+                (unclear_prs if ref else unclear).append(" ".join(filter(None, (item.task or (f"issue-{item.issue}" if item.issue else ""), f"({ref})" if len(pulls) > 1 else ""))) or ref)
         item.ref_statuses = given
         if pulls:
             item.status = ""
     ask += _list_question("Your notes say both that this is finished and that it isn't. Which is right?", list(dict.fromkeys(conflicts)))
-    ask += _list_question("What is the status (for example Merged, In review or Done)?", unclear)
+    ask += _list_question("What is the status (Done or In progress)?", unclear)
+    ask += _list_question("What is the status of the PR (for example Merged or In review)?", unclear_prs)
 
     # The same numbers for two tasks with different statuses or projects are in two repos
     for number, kind in {(item.issue, "issue") for item in draft.done if item.issue}:

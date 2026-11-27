@@ -189,7 +189,7 @@ def test_links_numbers_and_statuses_that_are_not_in_the_notes_are_not_kept():
     assert draft.done[0].refs == ["PR #102"] and draft.done[0].ref_statuses == {"PR #102": ""}  # never replaced by another status
     assert draft.done[1].status == ""  # the notes say merged for the other task
     assert asked(draft, "PR #999") and asked(draft, "https://x.test/1") and asked(draft, "(45)")
-    assert asked(draft, "or Done)? Fixed the date bug on the booking list; Fixed 45 bugs on the reset form")
+    assert asked(draft, "or In review)? Fixed the date bug on the booking list") and asked(draft, "In progress)? Fixed 45 bugs on the reset form")
 
 
 def test_invented_tasks_and_lost_points_are_asked_about():
@@ -836,3 +836,17 @@ def test_each_point_is_shown_once():
     assert points_to_check([], [result("clear_and_short", "FAIL", "Too long"), result("x", "SKIP", "AI checks are turned off.")], edited=True) == ["Rule: Too long"]
     reason = "AI check skipped: The AI service's limit is reached."
     assert points_to_check([], [result("a", "SKIP", reason), result("b", "SKIP", reason)], edited=False) == [f"2 rules not checked. {reason}"]
+
+
+def test_questions_split_into_their_items():
+    from pathlib import Path
+
+    from checker.writer import _list_question
+    from views.points import ASKS, split_point
+
+    status = "What is the status (Done or In progress)?"
+    assert split_point(_list_question(status, ["Task A", "Task B"])[0]) == {"ask": status, "items": ["Task A", "Task B"]}
+    assert split_point("A reader who isn't technical may not know: QA, CI") == {"ask": "A reader who isn't technical may not know:", "items": ["QA", "CI"]}
+    assert split_point("Clear and short: Too long") == {"ask": "Clear and short: Too long", "items": []}
+    code = Path("checker/writer.py").read_text(encoding="utf-8") + Path("api/main.py").read_text(encoding="utf-8")
+    assert all(ask in code for ask in ASKS)  # a question reworded in the writer needs the same words here

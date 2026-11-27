@@ -1,70 +1,121 @@
-# ZeeChecker: Daily Report Writer and Checker
+# ZeeNote
 
-Live app: https://zeecheck.streamlit.app
+**Rough notes in, a daily report your team can trust out.**
 
-Turns plain notes into a daily report in the team's format, checks it against the team's rules, and asks about
-anything that is missing or doubtful.
+ZeeNote turns a team member's rough notes into a daily report in the team's format. It checks every fact against the notes,
+asks about anything that is missing or doubtful, and never makes things up. Its core is **our own trained AI**: a small model
+trained to sort notes into the parts of a report, so the notes can stay inside the company and there is no daily limit.
 
-- **Input:** plain notes, and settings such as the reviewer, the date and the hours
-- **Output:** a report to edit, copy to Slack or download as `.md`
-- **AI:** [Groq](https://console.groq.com) cloud API. The notes and the report are sent to Groq. The AI only sorts the
-  notes into fields; code checks every field against the notes and writes the report
-- **Version 2:** daily reports in English
+> The code still uses the old name, ZeeChecker, in a few places. They will be renamed.
 
-- **Rules:** stored in a Supabase database and edited on the **Manage rules** page (forms, AI import
-  from a rule document, history with restore). Without a database, the example rules in `rules/*.yaml`
-  are used (read-only).
+## Status
+
+| Part | State |
+| --- | --- |
+| Write a report from notes: fact check, questions, preview, copy for Slack, `.md` download | Working |
+| 8 report rules: 3 checked by code, 5 by AI | Working |
+| Manage the rules (database, history, import from a rule document) | Working, button turned off for now |
+| Made-up training notes with known answers, scoring, Colab training notebook | Working |
+| Our own trained model | Not trained yet. Today the app uses a cloud AI ([Groq](https://console.groq.com)) |
+| **Web app v1** (`api/` + `web/`): sample accounts, write a report, My reports, each team's template and rules | First version, sample sign-in only |
+| Real accounts, teams and people pages, our own AI page, the ZeeNote console | Planned, shown only in the product mockup |
 
 ## How it works
 
 ```
-plain notes ──► AI sorts them into fields ──► code checks the fields against the notes ──► code writes the report
-                                                                                        └──► rules: 3 by code, 5 by AI
-
-rules: Supabase database (editable in the app)  ──fallback──►  rules/*.yaml (read-only examples)
+rough notes ──► AI sorts them into fields ──► code checks every field ──► code writes the report
+                (tasks, statuses, PRs,        against the notes;          in the team's format,
+                 plans, blockers)             doubtful points become       then checks the rules
+                                              questions
 ```
 
+**The main rule:** the AI only sorts the notes. Code writes the report, so the format is always the same, and a status, link or
+number that the notes don't support is left out or asked about.
+
+### Example
+
+Notes:
+
+```text
+issue 95 fix booking list shows the wrong date, pr 102 merged
+practiced the project presentation
+today: issue 97 chore add validation to the password reset form
+blocker: waiting for QA validation on staging
+```
+
+Report:
+
+```text
+✅ Yesterday (7 hours)
+    issue-95 ― [FIX] Booking list shows the wrong date
+        https://github.com/acme/app/pull/102 ― Merged
+    Practiced the project presentation
+🎯 Today (7 hours)
+    issue-97 ― [CHORE] Add validation to the password reset form
+🚧 Blockers / 📝 Notes
+    Waiting for QA validation on staging
+```
+
+Question: What is the status of "Practiced the project presentation"?
+
+## Our own AI
+
+The model has one job: rough notes in, the parts of a report out, as JSON. A small model can learn one job well, and it can run on
+our own server.
+
+1. **Training data:** code makes rough notes from fields that it chose first, so every answer is known and no AI writes them.
+   Typos, mixed order, emojis, missing parts and Japanese words are added on purpose. Every answer is checked with the app's
+   own fact check, and the test notes never share subjects or details with the training notes.
+2. **Training:** a LoRA fine-tune of Qwen2.5-1.5B-Instruct in Google Colab (free T4 GPU).
+3. **Scoring:** the same app code scores the model before and after training: tasks found, right fields, invented tasks, and
+   reports with a wrong fact and no warning.
+4. **Later:** with a team's permission, the reports it confirms become new training examples. A new version is used only if it
+   scores better.
+
+| Goal | Value |
+| --- | --- |
+| Reports with a wrong fact and no warning | At most 2 of 100 |
+| Right fields | Within 5 points of the best cloud model |
+| Time per report on our own server | Under 30 seconds |
+
+## Project layout
+
 | Path | Purpose |
-|---|---|
-| `app.py` | Entry point: page navigation |
-| `views/write.py` | **Write daily report** page (v2): plain notes in, a report in the team's template out |
-| `views/design.py`, `views/design.css` | The header, colors and layout |
-| `views/points.py` | The points to check, each only once |
-| `views/manage_rules.py` | **Manage rules** page (editors only; its button is turned off for now) |
-| `rules/*.yaml` | Example styles: fallback when there's no database, and the starting rules for a new one |
-| `supabase/migrations/` | Database tables and the history trigger |
-| `checker/store.py` | Reads and saves styles: Supabase, or the YAML files |
-| `checker/validation.py` | Checks a style is valid before it's saved |
-| `checker/rule_import.py` | Drafts rules from a rule document with the AI |
-| `checker/loader.py` | Reads md / txt / pdf / docx into text |
-| `checker/styles.py` | Loads the rule files |
-| `checker/basic_checks.py` | Rule checks in plain Python |
-| `checker/llm_checks.py` | Rule checks by the AI |
-| `checker/local_model.py` | Runs a small model inside the app |
-| `checker/writer.py` | Sorts plain notes into fields with the AI, checks them against the notes, and writes the report |
-| `checker/markup.py` | Turns the report's Markdown into HTML (preview) and Slack's format (copy) |
-| `checker/statuses.py` | Finds which statuses the notes support |
-| `checker/report.py` | Runs all rules; builds the summary and the table |
-| `tests/` | pytest tests (no API key or network needed) |
+| --- | --- |
+| `api/` | **Web app v1** backend (FastAPI): sign-in, teams, templates and rules, writing and saving reports. SQLite in `data/zeenote.db` |
+| `web/` | **Web app v1** front end (Next.js): Sign in, Write report, My reports, Template and rules |
+| `app.py` | Streamlit app entry point: pages and header |
+| `views/write.py` | **Write daily report** page |
+| `views/manage_rules.py` | **Manage rules** page (editors only) |
+| `views/design.py`, `views/design.css`, `views/points.py`, `views/shared.py` | Layout, colors, the points to check, shared helpers |
+| `checker/writer.py` | Asks the AI for the fields, checks them against the notes, and writes the report |
+| `checker/statuses.py` | Finds which statuses and PR or issue numbers the notes support |
+| `checker/markup.py` | The report's Markdown as HTML (preview) and in Slack's format (copy) |
+| `checker/report.py`, `checker/basic_checks.py`, `checker/llm_checks.py` | Runs the rules: by code and by AI |
+| `checker/store.py`, `checker/validation.py`, `checker/rule_import.py`, `checker/styles.py` | Rule database, rule checks, rule import |
+| `checker/local_model.py`, `checker/loader.py` | A model inside the app (GGUF), reading md / txt / pdf / docx |
+| `rules/*.yaml` | Built-in rules, used without a database |
+| `supabase/migrations/` | Database tables for the rules |
+| `training/make_notes.py` | Makes the training, validation and test notes |
+| `training/score_notes.py` | Scores a model on the test notes |
+| `training/notes_lora.ipynb` | Colab notebook: score, train, score again, make the model file |
+| `training/generate_examples.py`, `evaluate.py`, `prepare_dataset.py`, `zeechecker_lora.ipynb` | The earlier training for the rule checks |
+| `tests/` | pytest tests, with stand-ins for the AI. No API key or network needed |
 
 ## Setup (Windows, PowerShell)
 
 ```powershell
-cd team-doc-checker
+git clone https://github.com/mike1208-dev/zee-note.git
+cd zee-note
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-```
-
-Add your Groq key: create a free key at https://console.groq.com/keys, then
-
-```powershell
 Copy-Item .env.example .env
 notepad .env
 ```
 
-and put it after `GROQ_API_KEY=`. Never commit `.env` or share the key.
+Put a Groq key after `GROQ_API_KEY=` (free key: https://console.groq.com/keys). **Never commit `.env` or share a key.**
 
 ## Run
 
@@ -74,136 +125,122 @@ streamlit run app.py
 
 Open http://localhost:8501, write your notes and the settings, and click **Write daily report**.
 
-## Daily report rules
+**Groq's free plan** allows about 200,000 tokens per model per day. A report with its rule check uses about 4,300, so about 45
+reports a day per model, shared by everyone with the same key. If the limit is used up, choose another model in Settings.
 
-| Rule | Checked by | A report passes when… |
-|---|---|---|
-| `has_sections` | code | It has Yesterday (or Weekend), Today, and Blockers / Notes |
-| `tags_reviewer` | code | It tags the reviewer at the top |
-| `has_hours` | code | It gives hours for both Yesterday (spent) and Today (planned) |
-| `concrete_tasks` | AI | Each task says what was done or will be done |
-| `status_or_result` | AI | Each finished task has a status or result |
-| `clear_and_short` | AI | It is easy to read, with no repeated lines or needless detail |
-| `terms_explained` | AI | New, advanced or internal terms are explained (common software terms, such as PR or API, need no explanation) |
-| `real_blockers` | AI | Blockers are stated clearly, or "None" when there are none |
+## Run the web app (v1)
 
-If the database only has the old example rules, the built-in rules are used.
+It has two parts, each in its own PowerShell window. Install once:
 
-## Deployment
+```powershell
+pip install -r requirements.txt   # adds FastAPI and Uvicorn
+cd web
+npm install
+```
 
-The app runs on [Streamlit Community Cloud](https://share.streamlit.io) at https://zeecheck.streamlit.app.
+Then start the API (window 1, in the repo folder, with `.venv` on) and the web app (window 2):
 
-- **Python version:** 3.11 (Advanced settings)
-- **Secrets** (App settings → Secrets), the cloud version of `.env`:
-  ```toml
-  GROQ_API_KEY = "gsk_..."
-  SUPABASE_URL = "https://<project-ref>.supabase.co"
-  SUPABASE_KEY = "sb_secret_..."
-  EDITOR_PASSWORD = "..."
-  ```
-- Every push to the deployed branch redeploys the app automatically.
-- Invite teammates in App settings → Sharing.
+```powershell
+uvicorn api.main:app --reload
+```
 
-## Rule database (Supabase)
+```powershell
+cd web
+npm run dev
+```
 
-1. Create a project at https://supabase.com.
-2. Open **SQL Editor**, paste the contents of `supabase/migrations/20261120000000_rule_store.sql` and
-   click **Run**. It creates the `styles` and `style_history` tables. It's safe to run again.
-3. Add to `.env` (local) or Streamlit **Secrets** (deployed):
-   ```toml
-   SUPABASE_URL = "https://<project-ref>.supabase.co"    # Project Settings -> Data API
-   SUPABASE_KEY = "sb_secret_..."                        # Project Settings -> API Keys -> Secret keys
-   EDITOR_PASSWORD = "choose-a-password"
+Open http://localhost:3000 and sign in with a sample account. The password of every one is `zeenote`:
+
+| Account | Role | Sees |
+| --- | --- | --- |
+| `owner@zeenote.com` | Company Owner (Ava) | Template and rules of every team |
+| `manager@zeenote.com` | Team Manager (Sam) of the App team and the Web team | Write report, My reports, Template and rules |
+| `member@zeenote.com` | Team Member (Kai) of the App team and the Web team | Write report, My reports |
+| `admin@zeenote.com` | ZeeNote Admin | The ZeeNote overview: numbers of each company, never its reports |
+
+The sample company is made the first time the API starts. To start again from nothing, stop the API and delete
+`data/zeenote.db`. The sign-in is for trying the app only: there are no real passwords yet.
+
+### Share it with teammates for a trial
+
+A [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
+gives the app on this computer a public `https://….trycloudflare.com` address. It works only while this computer and the
+three windows are on, and the address changes each time the tunnel starts.
+
+1. Put a long password after `ZEENOTE_PASSWORD=` in `.env`. Every sample account uses it.
+2. Start the API without `--reload`, and the web app as a production build:
+   ```cmd
+   .venv\Scripts\python -m uvicorn api.main:app
    ```
-   The secret key only lives on the server; the tables have row level security with no policies, so
-   nobody can reach them with the public key.
-4. Open **Manage rules**, unlock with the editor password, and click **Load the example rules** (or
-   create styles from scratch).
+   ```cmd
+   cd web
+   npm run build
+   npm start
+   ```
+3. Start the tunnel in a third window and send the `https://….trycloudflare.com` address it prints:
+   ```cmd
+   cloudflared tunnel --url http://localhost:3000
+   ```
 
-## Managing rules
-
-On the **Manage rules** page (editor password required):
-
-- **Edit styles:** create, edit or delete styles and their rules with forms; test the rules on a sample
-  document before saving. Changes apply to checks right away; no redeploy.
-- **Import from rule document:** upload or paste a written rule document; the AI drafts a style for you
-  to review, test and save.
-- **History:** every save or delete keeps the previous version; restore any of them.
-
-Without a database, styles come from `rules/*.yaml`. A style file looks like this:
-
-```yaml
-name: Meeting notes
-description: Decisions and action items from a meeting.
-detect: ["meeting notes", "attendees", "action items"]   # not used now
-
-rules:
-  - id: has_sections
-    title: Has Attendees / Decisions / Action items
-    check: required_sections
-    sections:
-      - "Attendees"
-      - ["Decisions", "Outcomes"]          # a list = any of these names is accepted
-      - "Action items"
-  - id: owners
-    title: Every action item has an owner
-    check: llm
-    question: "Does every action item name a person responsible for it?"
-```
-
-### Check types
-
-| `check` | Options | Result |
-|---|---|---|
-| `required_sections` | `sections`: names (or lists of alternative names) | ❌ if any is missing |
-| `no_secrets` | none | ❌ for API keys/tokens, ⚠️ for `password: ...` lines. If any is found, the text isn't sent to Groq |
-| `word_count` | `min`, `max` | ❌ if too short or too long |
-| `long_sentences` | `max_words` (default 35) | ⚠️ for sentences that are too long |
-| `forbidden_phrases` | `phrases`: e.g. `["TODO", "TBD"]` | ❌ if any appears |
-| `must_contain` | `phrases`: text that must appear | ❌ if any is missing |
-| `pattern` | `pattern` (regular expression), `must`: `match` / `not_match`, `label` | ❌ if missing (or found, with `not_match`) |
-| `mention_at_top` | `lines` (default 3) | ❌ if nobody is tagged with @ in the first lines |
-| `working_hours` | `sections`: same shape as in `required_sections` | ❌ if a section gives no hours |
-| `llm` | `question`: the rule as a yes/no question; `known_terms` (optional): a fail that is only about these terms becomes a pass | ✅ / ❌ / ⚠️ from the AI |
-
-Use plain checks wherever possible; use `llm` only for rules that need understanding.
-
-## Choosing a model
-
-Pick the model in Settings, or in the rule test on **Manage rules**. The Groq models come from `.env` / Secrets, so no code
-change is needed when Groq retires or adds models:
-
-```toml
-GROQ_MODEL = "qwen/qwen3.8-27b"                                              # default Groq model
-GROQ_MODELS = "qwen/qwen3.8-27b,openai/gpt-oss-20b,openai/gpt-oss-120b"      # dropdown list
-```
-
-Available models: https://console.groq.com/docs/models
-
-## Local model
-
-A small model can run inside the app (CPU, `llama-cpp-python`) for the rule test on **Manage rules**. When it's set in
-`.env` / Secrets, it is first in that model list. If it can't run, its checks are skipped; they are never sent to Groq instead.
-
-```toml
-LOCAL_MODEL_REPO = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"    # Hugging Face repository
-LOCAL_MODEL_FILE = "qwen2.5-0.5b-instruct-q8_0.gguf"    # about 0.7 GB
-LOCAL_MODEL_LABEL = "Qwen2.5-0.5B (untrained)"          # name in the model list
-HF_TOKEN = ""                                           # only for a private repository
-```
-
-This example is an untrained model.
+Send each teammate their email and the password privately. The sample accounts aren't listed on the sign-in page through the
+link. Everything teammates write goes to Groq with the key in `.env`, and they share its daily limit.
 
 ## Tests
 
 ```powershell
-python -m pytest -v
+python -m pytest -q
 ```
 
-## Roadmap
+## Training
 
-1. Check all AI rules in one request, to use less of Groq's free limit
-2. Collect the team's feedback on the written reports
-3. Add Issue/PR descriptions and work plans
+1. Open `training/notes_lora.ipynb` in Google Colab and choose **Runtime → Change runtime type → T4 GPU**.
+2. Run the cells from top to bottom. The notebook makes the notes itself, so nothing has to be uploaded.
+3. To make the notes on your computer instead: `python -m training.make_notes` (written to `data/notes/`).
+4. To score a model: `python -m training.score_notes --name <name> --gguf <model file>`, or `--groq <model>`.
 
-Real reports are private: keep them in `data/` (git-ignored), never in this public repository.
+Only made-up notes may be sent to a cloud AI. Real reports stay on your computer and in private Colab sessions.
+
+## Report rules
+
+| Rule | Checked by | A report passes when… |
+| --- | --- | --- |
+| `has_sections` | code | It has Yesterday (or Weekend), Today, and Blockers / Notes |
+| `tags_reviewer` | code | It tags the reviewer at the top |
+| `has_hours` | code | It gives hours for both Yesterday and Today |
+| `concrete_tasks` | AI | Each task says what was done or will be done |
+| `status_or_result` | AI | Each finished task has a status or result |
+| `clear_and_short` | AI | It is easy to read, with no repeated lines or needless detail |
+| `terms_explained` | AI | New, advanced or internal terms are explained |
+| `real_blockers` | AI | Blockers are stated clearly, or "None" when there are none |
+
+Editors can change the rules on the **Manage rules** page, if a Supabase database is set in `.env`
+(`SUPABASE_URL`, `SUPABASE_KEY`, `EDITOR_PASSWORD`). Run `supabase/migrations/20261120000000_rule_store.sql` once in the
+database's SQL Editor to create its tables. Without a database, `rules/*.yaml` is used.
+
+## Models
+
+The cloud models come from `.env`, so no code change is needed when Groq adds or retires a model:
+
+```toml
+GROQ_MODEL = "qwen/qwen3.8-27b"                                          # default
+GROQ_MODELS = "qwen/qwen3.8-27b,openai/gpt-oss-20b,openai/gpt-oss-120b"  # the list in Settings
+```
+
+A model file (GGUF) can also run inside the app, for the rule test on **Manage rules**: set `LOCAL_MODEL_REPO` and
+`LOCAL_MODEL_FILE`, or `LOCAL_MODEL_PATH`. See `.env.example`.
+
+## Privacy
+
+- Notes and reports are sent to Groq while the cloud AI is used. The page says so.
+- Real reports and notes are private: keep them in `data/` (ignored by Git), never in this public repository.
+- Text that looks like a key or a password is not sent to the AI.
+
+## Contributing
+
+- Start each piece of work from a GitHub issue, on a branch named `feature/<issue-number>-short-description`, made from the
+  freshly pulled base branch.
+- Commit messages: `type: short summary`, such as `feat: add the team feed` or `fix: keep the date after another page`.
+  Types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `style`, `chore`, `ci`, `revert`.
+- Rebase on the base branch before pushing, and use `--force-with-lease`, never plain `--force`.
+- Never push directly to the base branch: every change goes through a pull request with `Closes #<issue>`.
+- Run the tests before opening a pull request.

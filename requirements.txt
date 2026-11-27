@@ -11,6 +11,8 @@ groq==1.7.0            # Groq cloud API for the AI checks
 llama-cpp-python==0.3.36  # runs the local model in the app
 huggingface-hub==2.4.0    # downloads the local model
 httpx==0.28.1          # Supabase REST API (rule database)
+fastapi==0.165.0       # the web app's API (api/)
+uvicorn==0.54.0        # runs the API
 pdfplumber==0.11.10    # read .pdf
 python-docx==1.2.0     # read .docx
 
