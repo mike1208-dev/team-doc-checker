@@ -3,10 +3,11 @@
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { api, ApiError, getToken, setToken, type Me, type Team } from "./api";
+import type { IconName } from "@/components/Icon";
 
 const TEAM = "zeenote-team";
 
-export type Page = { href: string; icon: string; label: string; group: string };
+export type Page = { href: string; icon: IconName; label: string; group: string };
 
 // Owner manages the company's teams. A Team Manager writes and manages their teams' template. A Team Member writes.
 // A ZeeNote Admin is ZeeNote's own staff: they see the console, never a company's reports
@@ -17,13 +18,13 @@ export function roleName(me: Me): string {
 }
 
 export function pagesOf(me: Me): Page[] {
-  if (me.admin) return [{ href: "/console", icon: "📈", label: "Overview", group: "ZeeNote" }];
+  if (me.admin) return [{ href: "/console", icon: "console" as const, label: "Overview", group: "ZeeNote" }];
   const writes = !me.owner;
   const edits = me.owner || me.teams.some((team) => team.role === "Manager");
   const group = me.owner ? "Company" : "My work";
   return [
-    ...(writes ? [{ href: "/write", icon: "📝", label: "Write report", group }, { href: "/reports", icon: "🗂️", label: "My reports", group }] : []),
-    ...(edits ? [{ href: "/templates", icon: "📐", label: "Template and rules", group }] : []),
+    ...(writes ? [{ href: "/write", icon: "write" as const, label: "Write report", group }, { href: "/reports", icon: "reports" as const, label: "My reports", group }] : []),
+    ...(edits ? [{ href: "/templates", icon: "templates" as const, label: "Template and rules", group }] : []),
   ];
 }
 

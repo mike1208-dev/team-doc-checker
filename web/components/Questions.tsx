@@ -1,6 +1,8 @@
 "use client";
 
 import type { Ask } from "@/lib/api";
+import { Icon } from "@/components/Icon";
+import { Select } from "@/components/Select";
 
 const rowsOf = (ask: Ask) => (ask.items.length ? ask.items : [""]);
 
@@ -32,28 +34,34 @@ export function Questions({ asks, answers, onAnswer, open, disabled, writing, on
 }) {
   const solved = (ask: Ask, item: string) => open !== null && !open.some((other) => other.ask === ask.ask && (!item || other.items.includes(item)));
   const done = open !== null && open.length === 0;
+  const count = asks.reduce((sum, ask) => sum + rowsOf(ask).length, 0);
 
   return (
-    <section id="questions" className={`card stack questions ${done ? "done" : ""}`} aria-live="polite">
-      <div>
-        <h2>Before we write</h2>
-        <p className="soft small">Leave a box empty to skip it. Changed your notes? Click Check notes again.</p>
+    <section id="questions" className={`card flush questions ${done ? "done" : ""}`} aria-live="polite">
+      <div className="card-head">
+        <div className="title-row">
+          <span className="badge-num">2</span>
+          <div>
+            <h2>{count === 1 ? "1 question" : `${count} questions`}</h2>
+            <p className="soft small">Leave one empty to skip it. Changed your notes? Click Check notes again.</p>
+          </div>
+        </div>
+        {done && <span className="tag ok"><Icon name="check" size={12} /> All answered</span>}
       </div>
-      {/* the part of the notes first, then the question about it */}
+      {/* the part of the notes first, then the question about it; not a label, so a click on the words opens nothing.
+          Many questions scroll inside the card, so Write report stays in reach */}
+      <div className="question-list" tabIndex={-1}>
       {asks.map((ask, i) =>
         rowsOf(ask).map((item, j) => (
-          // not a label: a click on the words shouldn't open the dropdown
-          <div key={`${i}-${j}`} className="stack" style={{ gap: 4, fontSize: 14 }}>
-            {item && <i>{item}</i>}
-            <span id={`ask-${i}-${j}`} style={{ fontWeight: 600 }}>
+          <div key={`${i}-${j}`} className="question">
+            {item && <span className="from">{item}</span>}
+            <span id={`ask-${i}-${j}`} className="ask">
               {ask.ask}
-              {solved(ask, item) && <span className="solved" aria-label="Answered"> ✓</span>}
+              {solved(ask, item) && <span className="solved" aria-label="Answered"><Icon name="check" size={14} /></span>}
             </span>
             {CHOICES[ask.ask] ? (
-              <select aria-labelledby={`ask-${i}-${j}`} value={answers[`${i}-${j}`] ?? ""} onChange={(event) => onAnswer(`${i}-${j}`, event.target.value)} disabled={disabled}>
-                <option value="">Choose…</option>
-                {CHOICES[ask.ask].map((choice) => <option key={choice}>{choice}</option>)}
-              </select>
+              <Select labelledBy={`ask-${i}-${j}`} value={answers[`${i}-${j}`] ?? ""} onChange={(value) => onAnswer(`${i}-${j}`, value)} disabled={disabled}
+                options={[{ value: "", label: "Skip" }, ...CHOICES[ask.ask].map((choice) => ({ value: choice, label: choice }))]} />
             ) : (
               <input aria-labelledby={`ask-${i}-${j}`} value={answers[`${i}-${j}`] ?? ""} onChange={(event) => onAnswer(`${i}-${j}`, event.target.value)} disabled={disabled}
                 onKeyDown={(event) => event.key === "Enter" && event.preventDefault()} /* Enter would check the notes again */ />
@@ -61,9 +69,11 @@ export function Questions({ asks, answers, onAnswer, open, disabled, writing, on
           </div>
         )),
       )}
-      <div className="row" style={{ justifyContent: "flex-end" }}>
+      </div>
+      <div className="card-foot">
+        <span className="faint small">Your answers are added to your notes.</span>
         <button type="button" className="btn main" onClick={onWrite} disabled={disabled}>
-          {writing ? "Writing…" : "Write report"}
+          {writing ? "Writing…" : <>Write report <Icon name="arrow" size={14} /></>}
         </button>
       </div>
     </section>

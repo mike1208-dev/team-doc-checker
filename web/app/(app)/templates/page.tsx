@@ -41,7 +41,7 @@ export default function TemplatesPage() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  if (!team) return <p className="soft">There are no teams yet.</p>;
+  if (!team) return <main className="content"><p className="soft">There are no teams yet.</p></main>;
 
   async function save(path: string, body?: Template) {
     setBusy(true);
@@ -60,7 +60,7 @@ export default function TemplatesPage() {
   const changed = rules !== null && saved !== null && JSON.stringify(forSaving({ rules }).rules) !== JSON.stringify(saved.rules);
 
   return (
-    <>
+    <main className="content">
       <div className="row between">
         <div>
           <h1>Template and rules</h1>
@@ -161,6 +161,6 @@ export default function TemplatesPage() {
         </>
       )}
       {toast && <div className="toast" role="status">{toast}</div>}
-    </>
+    </main>
   );
 }

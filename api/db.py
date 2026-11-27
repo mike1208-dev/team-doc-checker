@@ -34,21 +34,23 @@ create table if not exists sessions (token text primary key, email text not null
 """
 
 COMPANY = "Acme Inc."  # the sample company
-# name: (email, owner, admin). Sam is the CTO, so he manages two teams. Kai works in both of them
+SAMPLE = 4  # raised when the sample people or teams change, so an older database starts again
+# name: (email, owner, admin). Illia manages three teams, and Mike works in two of them. The Support Team has its own manager
 USERS = {
-    "Ava": ("owner@zeenote.com", 1, 0),
-    "Sam": ("manager@zeenote.com", 0, 0),
-    "Kai": ("member@zeenote.com", 0, 0),
-    "Lina": ("lina@zeenote.com", 0, 0),
-    "Noah": ("noah@zeenote.com", 0, 0),
-    "Yuki": ("yuki@zeenote.com", 0, 0),
-    "Leo": ("leo@zeenote.com", 0, 0),
-    "Admin": ("admin@zeenote.com", 0, 1),
+    "Dan": ("dan@zeenote.ai", 1, 0),
+    "Illia": ("illia@zeenote.ai", 0, 0),
+    "Mike": ("mike@zeenote.ai", 0, 0),
+    "Lina": ("lina@zeenote.ai", 0, 0),
+    "Noah": ("noah@zeenote.ai", 0, 0),
+    "Yuki": ("yuki@zeenote.ai", 0, 0),
+    "Leo": ("leo@zeenote.ai", 0, 0),
+    "Admin": ("admin@zeenote.ai", 0, 1),
 }
 TEAMS = {
-    "App team": [("Sam", "Manager"), ("Kai", "Member"), ("Lina", "Member"), ("Noah", "Member")],
-    "Web team": [("Sam", "Manager"), ("Kai", "Member"), ("Lina", "Member")],
-    "Support team": [("Yuki", "Manager"), ("Leo", "Member")],
+    "Cova Team": [("Illia", "Manager"), ("Mike", "Member"), ("Lina", "Member")],
+    "Commity Team": [("Illia", "Manager"), ("Noah", "Member")],
+    "AI-Training Team": [("Illia", "Manager"), ("Mike", "Member"), ("Noah", "Member")],
+    "Support Team": [("Yuki", "Manager"), ("Leo", "Member")],
 }
 
 
@@ -79,10 +81,16 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
 
 def setup(path: Path = DB_PATH) -> None:
     with connect(path) as db:
-        if (columns := {row[1] for row in db.execute("pragma table_info(users)")}) and "admin" not in columns:
-            # the first sample company, with the old emails: start again
-            db.executescript("".join(f"drop table if exists {name};" for name in ("sessions", "reports", "templates", "members", "teams", "users")))
+        if db.execute("pragma table_info(users)").fetchone() and db.execute("pragma user_version").fetchone()[0] < SAMPLE:
+            # an older sample company, with other people or teams: start again
+            names = ("sessions", "reports", "settings", "templates", "members", "teams", "users")
+            db.executescript("".join(f"drop table if exists {name};" for name in names))
         db.executescript(SCHEMA)
+        db.execute(f"pragma user_version = {SAMPLE}")
+        # one report a person, team and day: a report copied again replaces that day's one. Copies saved twice before
+        # this rule keep only the newest
+        db.execute("delete from reports where id not in (select max(id) from reports group by email, team_id, day)")
+        db.execute("create unique index if not exists one_report_a_day on reports (email, team_id, day)")
         if db.execute("select count(*) from users").fetchone()[0]:
             return
         db.executemany("insert into users (email, name, owner, admin) values (?, ?, ?, ?)", [(email, name, owner, admin) for name, (email, owner, admin) in USERS.items()])

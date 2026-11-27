@@ -220,10 +220,15 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         in_team(conn, user, body.team_id)
         if not body.text.strip():
             raise HTTPException(422, "The report is empty.")
-        report_id = conn.execute(
-            "insert into reports (email, team_id, day, notes, text) values (?, ?, ?, ?, ?)", (user["email"], body.team_id, body.day.isoformat(), body.notes, body.text)
-        ).lastrowid
-        return {"id": report_id}
+        key = (user["email"], body.team_id, body.day.isoformat())
+        replaced = conn.execute("select 1 from reports where email = ? and team_id = ? and day = ?", key).fetchone() is not None
+        conn.execute(
+            "insert into reports (email, team_id, day, notes, text) values (?, ?, ?, ?, ?)"
+            " on conflict (email, team_id, day) do update set notes = excluded.notes, text = excluded.text, created_at = datetime('now')",
+            (*key, body.notes, body.text),
+        )
+        report_id = conn.execute("select id from reports where email = ? and team_id = ? and day = ?", key).fetchone()["id"]
+        return {"id": report_id, "replaced": replaced}
 
     @app.get("/api/reports")
     def my_reports(user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
@@ -241,6 +246,12 @@ def create_app(db_path: Path = db.DB_PATH) -> FastAPI:
         if not row:
             raise HTTPException(404, "This report doesn't exist.")
         return {**dict(row), **markup(row["text"])}
+
+    @app.delete("/api/reports/{report_id}")
+    def delete_report(report_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):
+        if not conn.execute("delete from reports where id = ? and email = ?", (report_id, user["email"])).rowcount:
+            raise HTTPException(404, "This report doesn't exist.")
+        return {"ok": True}
 
     @app.get("/api/teams/{team_id}/settings")
     def my_settings(team_id: int, user=Depends(signed_in), conn: sqlite3.Connection = Depends(database)):

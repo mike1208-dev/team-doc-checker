@@ -153,10 +153,10 @@ Open http://localhost:3000 and sign in with a sample account. The password of ev
 
 | Account | Role | Sees |
 | --- | --- | --- |
-| `owner@zeenote.com` | Company Owner (Ava) | Template and rules of every team |
-| `manager@zeenote.com` | Team Manager (Sam) of the App team and the Web team | Write report, My reports, Template and rules |
-| `member@zeenote.com` | Team Member (Kai) of the App team and the Web team | Write report, My reports |
-| `admin@zeenote.com` | ZeeNote Admin | The ZeeNote overview: numbers of each company, never its reports |
+| `dan@zeenote.ai` | Company Owner (Dan) | Template and rules of every team |
+| `illia@zeenote.ai` | Team Manager (Illia) of the Cova, Commity and AI-Training teams | Write report, My reports, Template and rules |
+| `mike@zeenote.ai` | Team Member (Mike) of the Cova and AI-Training teams | Write report, My reports |
+| `admin@zeenote.ai` | ZeeNote Admin | The ZeeNote overview: numbers of each company, never its reports |
 
 The sample company is made the first time the API starts. To start again from nothing, stop the API and delete
 `data/zeenote.db`. The sign-in is for trying the app only: there are no real passwords yet.

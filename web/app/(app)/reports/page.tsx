@@ -4,6 +4,18 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type ReportRow } from "@/lib/api";
 import { useSession } from "@/lib/session";
+import { Icon } from "@/components/Icon";
+import { PageHead } from "@/components/Shell";
+import { Spinner } from "@/components/Spinner";
+
+const dateOf = (day: string) => new Date(`${day}T00:00`);
+
+// The first tasks of the report, as one line: "Booking list shows the wrong date · Send an email…"
+function tasksOf(text: string): string {
+  const plain = (line: string) => line.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#>]/g, "").replace(/^\s*[-•]\s*/, "").trim();
+  const tasks = text.split("\n").filter((line) => /^\s{2,}[-•]/.test(line)).map(plain).filter(Boolean);
+  return (tasks.length ? tasks : [plain(text.replace(/\s+/g, " "))]).slice(0, 3).join(" · ");
+}
 
 export default function ReportsPage() {
   const { team, teams } = useSession();
@@ -14,40 +26,57 @@ export default function ReportsPage() {
     api<ReportRow[]>("/reports").then(setRows).catch((e) => setError(e.message));
   }, []);
 
-  // with several teams, the list shows the team chosen at the top
+  // with several teams, the list shows the team chosen in the menu
   const shown = (rows ?? []).filter((row) => teams.length < 2 || row.team_id === team?.id);
+  const months = [...new Set(shown.map((row) => dateOf(row.day).toLocaleDateString("en-US", { month: "long", year: "numeric" })))];
+
   return (
     <>
-      <div>
-        <h1>My reports</h1>
-        <p className="soft">{teams.length > 1 && team ? <><b>{team.name}</b> · </> : null}Every report you copied for Slack, newest first.</p>
-      </div>
-      {error && <p className="notice bad">{error}</p>}
-      {rows === null && !error && <p className="soft">Loading…</p>}
-      {rows !== null && (
-        <div className="card scroll">
-          {shown.length === 0 ? (
-            <div className="empty">
-              No reports yet. <Link href="/write">Write your first one</Link>.
-            </div>
-          ) : (
-            <table>
-              <thead>
-                <tr><th>Date</th><th>Team</th><th>Report</th></tr>
-              </thead>
-              <tbody>
-                {shown.map((row) => (
-                  <tr key={row.id}>
-                    <td style={{ whiteSpace: "nowrap" }}><Link href={`/reports/${row.id}`}>{row.day}</Link></td>
-                    <td style={{ whiteSpace: "nowrap" }}>{row.team}</td>
-                    <td className="soft small">{row.text.replace(/[*:@]/g, "").replace(/\s+/g, " ").slice(0, 140)}…</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
+      <PageHead title="My reports" sub={<>{teams.length > 1 && team ? `${team.name} · ` : ""}Every report you copied for Slack, newest first.</>}>
+        <Link href="/write" className="btn main">
+          <Icon name="write" size={14} /> Write report
+        </Link>
+      </PageHead>
+      <main className="content" style={{ maxWidth: 880 }}>
+        {error && <p className="notice bad">{error}</p>}
+        {rows === null && !error && <div className="empty"><Spinner />Loading your reports…</div>}
+        {rows !== null && shown.length === 0 && (
+          <div className="card empty">
+            <span className="icon-ring"><Icon name="reports" size={20} /></span>
+            <b>No reports yet</b>
+            <span className="small">Reports you copy for Slack are kept here.</span>
+            <Link href="/write" className="btn main" style={{ marginTop: 10 }}>Write your first report</Link>
+          </div>
+        )}
+        {months.map((month) => (
+          <section key={month} className="stack" style={{ gap: 8 }}>
+            <h2 className="month">{month}</h2>
+            <ul className="card flush report-list">
+              {shown.filter((row) => dateOf(row.day).toLocaleDateString("en-US", { month: "long", year: "numeric" }) === month).map((row) => {
+                const date = dateOf(row.day);
+                return (
+                  <li key={row.id}>
+                    <Link href={`/reports/${row.id}`}>
+                      <span className="date-tile" aria-hidden="true">
+                        <small>{date.toLocaleDateString("en-US", { month: "short" })}</small>
+                        <b>{date.getDate()}</b>
+                      </span>
+                      <span style={{ minWidth: 0 }}>
+                        <span className="row" style={{ gap: 8 }}>
+                          <b style={{ fontWeight: 500 }}>{date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</b>
+                          {teams.length > 1 && <span className="tag off">{row.team}</span>}
+                        </span>
+                        <span className="snippet" style={{ display: "block" }}>{tasksOf(row.text)}</span>
+                      </span>
+                      <span className="faint"><Icon name="next" /></span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </main>
     </>
   );
 }

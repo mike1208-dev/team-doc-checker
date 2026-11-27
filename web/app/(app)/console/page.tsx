@@ -16,7 +16,7 @@ export default function ConsolePage() {
 
   const total = (key: keyof Company) => (companies ?? []).reduce((sum, company) => sum + Number(company[key]), 0);
   return (
-    <>
+    <main className="content">
       <div>
         <h1>Overview</h1>
         <p className="soft">Every company that uses ZeeNote. Staff see numbers, never a company&apos;s reports.</p>
@@ -49,6 +49,6 @@ export default function ConsolePage() {
           </div>
         </>
       )}
-    </>
+    </main>
   );
 }

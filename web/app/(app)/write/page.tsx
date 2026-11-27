@@ -8,6 +8,9 @@ import { useSession } from "@/lib/session";
 import { Questions, answersAsNotes } from "@/components/Questions";
 import { RuleList } from "@/components/RuleList";
 import { Spinner } from "@/components/Spinner";
+import { Icon } from "@/components/Icon";
+import { Select } from "@/components/Select";
+import { PageHead } from "@/components/Shell";
 
 const SAMPLE = `issue 95 fix booking list shows the wrong date, pr 102 merged
 issue 96 feat send an email when the password is reset, pr 101 in review
@@ -110,7 +113,7 @@ export default function WritePage() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  if (!team) return <p className="soft">You aren't in a team yet. Ask your company's owner to add you.</p>;
+  if (!team) return <main className="content"><p className="soft">You aren&apos;t in a team yet. Ask your company&apos;s owner to add you.</p></main>;
 
   const writing = busy !== "";
 
@@ -169,7 +172,7 @@ export default function WritePage() {
         setTimeout(() => {
           const card = document.getElementById("questions");
           card?.scrollIntoView({ behavior: "smooth", block: "start" });
-          card?.querySelector<HTMLElement>("input, select")?.focus({ preventScroll: true });
+          card?.querySelector<HTMLElement>("input, [role=combobox]")?.focus({ preventScroll: true });
         });
     } catch (e) {
       setError((e as Error).message);
@@ -209,8 +212,9 @@ export default function WritePage() {
     const fresh = rendered?.text === text ? rendered : null;
     const copied = await copyReport({ text, html: fresh?.html, slack: fresh?.slack });
     try {
-      await api("/reports", { body: { team_id: team!.id, day, notes: written!.notes, text } }); // with the answers
-      setToast(copied ? "Copied. Paste it into Slack. It's saved in My reports." : "Saved in My reports, but this browser didn't allow copying. Copy it from the Markdown tab.");
+      const { replaced } = await api<{ replaced: boolean }>("/reports", { body: { team_id: team!.id, day, notes: written!.notes, text } }); // with the answers
+      const kept = replaced ? "This day's report in My reports is updated." : "It's saved in My reports.";
+      setToast(copied ? `Copied. Paste it into Slack. ${kept}` : `${kept} This browser didn't allow copying, so copy it from Edit.`);
     } catch (e) {
       setToast(`${copied ? "Copied" : "Not copied"}, but not saved: ${(e as Error).message}`);
     }
@@ -218,150 +222,199 @@ export default function WritePage() {
 
   const edited = written !== null && text !== written.text;
   const toFill = /\[add (?:your tasks|your blockers, or None|the title)\]/.test(text);
+  const step = written ? 3 : asked ? 2 : 1;
+  const longDay = day ? new Date(`${day}T00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : "";
+  const run = checked?.rules.filter((rule) => rule.status !== "SKIP") ?? [];
+  const passed = run.filter((rule) => rule.status === "PASS").length;
 
   return (
     <>
-      <div className="row between">
-        <div>
-          <h1>Write report</h1>
-          <p className="soft">
-            <b>{team.name}</b> · Write rough notes. ZeeNote writes the report in your team&apos;s format.
-          </p>
-        </div>
-      </div>
+      <PageHead title="Write report" sub={<>{team.name}{longDay && ` · ${longDay}`}</>}>
+        <ol className="steps" aria-label="Steps">
+          {["Notes", "Questions", "Report"].map((name, i) => (
+            <li key={name} className={i + 1 === step ? "now" : i + 1 < step ? "past" : ""} aria-current={i + 1 === step ? "step" : undefined}>
+              <span className="dot">{i + 1 < step ? <Icon name="check" size={12} /> : i + 1}</span>
+              <span className="label">{name}</span>
+            </li>
+          ))}
+        </ol>
+      </PageHead>
 
-      <form className="write" onSubmit={checkNotes} noValidate>
-        <div className="stack" style={{ gap: 18 }}>
-          <div className="card stack">
-            <div>
-              <h2>Your notes</h2>
-              <p className="soft small">What you did, what you&apos;ll do, and any blockers. Any order is fine. Don&apos;t write keys or passwords: the notes are sent to an AI service.</p>
-            </div>
-            <textarea rows={8} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="e.g. fixed issue 95, pr 102 merged…" disabled={writing} aria-label="Your notes" />
-            <div className="row between">
-              <button type="button" className="btn" onClick={() => setNotes(SAMPLE)} disabled={writing}>
-                Use sample notes
-              </button>
-              <button className="btn main" disabled={writing || !notes.trim()}>
-                {busy === "checking" ? "Checking…" : "Check notes"}
-              </button>
-            </div>
-          </div>
-
-          {/* the notes stay editable: Check notes again asks again */}
-          {asked && (
-            <Questions asks={asked.asks} answers={answers} onAnswer={(key, value) => setAnswers({ ...answers, [key]: value })} open={checked?.asks ?? null}
-              disabled={writing} writing={busy === "writing"} onWrite={writeWithAnswers} />
-          )}
-        </div>
-
-        <div className="card stack">
-          <div>
-            <h2>Settings</h2>
-            <p className="soft small">All fields are required. ZeeNote remembers them for your next report.</p>
-          </div>
-          <label>
-            <span>Reviewer (tagged at the top)</span>
-            <input {...field("reviewer")} value={mine.reviewer} onChange={(event) => { setMine({ ...mine, reviewer: event.target.value }); clear("reviewer"); }} placeholder="e.g. Sam" disabled={writing} />
-            {problem("reviewer")}
-          </label>
-          <label>
-            <span>Date</span>
-            <input {...field("day")} type="date" value={day} onChange={(event) => { setDay(event.target.value); clear("day"); }} disabled={writing} />
-            {problem("day")}
-          </label>
-          <label>
-            <span>First section</span>
-            <select value={firstSection} onChange={(event) => setFirstSection(event.target.value as "Yesterday" | "Weekend")} disabled={writing}>
-              <option>Yesterday</option>
-              <option>Weekend</option>
-            </select>
-          </label>
-          <div className="cols2">
-            {(["done", "plan"] as const).map((name, i) => (
-              <label key={name}>
-                <span>{i === 0 ? firstSection : "Today"} (hours)</span>
-                <input {...field(name)} type="number" min={0} max={24} step={0.5} value={hours[i]} disabled={writing}
-                  onChange={(event) => { setHours(i === 0 ? [event.target.value, hours[1]] : [hours[0], event.target.value]); clear(name); }} />
-                {problem(name)}
-              </label>
-            ))}
-          </div>
-          <label>
-            <span>GitHub repo link</span>
-            <input {...field("repo")} value={mine.repo} onChange={(event) => { setMine({ ...mine, repo: event.target.value }); clear("repo"); }} placeholder="https://github.com/acme/app" disabled={writing} />
-            {problem("repo")}
-          </label>
-          <label>
-            <span>Greeting</span>
-            <textarea {...field("greeting")} rows={2} value={mine.greeting} onChange={(event) => { setMine({ ...mine, greeting: event.target.value }); clear("greeting"); }} disabled={writing} />
-            {problem("greeting")}
-          </label>
-        </div>
-      </form>
-
-      <section className="card stack" aria-live="polite">
-        <div>
-          <h2>Your daily report</h2>
-          <p className="soft small">Check it, edit if needed, and copy it to Slack.</p>
-        </div>
-        {error && <p className="notice bad" role="alert">{error}</p>}
-        {busy === "checking" && <div className="empty"><Spinner />Checking your notes…</div>}
-        {busy === "writing" && <div className="empty"><Spinner />Writing your daily report…</div>}
-        {!writing && !written && !error && (
-          <div className="empty">
-            {asked ? (
-              <>Answer the questions above, then click <b>Write report</b>.</>
-            ) : (
-              <>Write your notes and click <b>Check notes</b>. ZeeNote asks about anything missing, then writes the report here.</>
-            )}
-          </div>
-        )}
-        {written && checked && (
-          <>
-            {/* with the questions open, they show what is still open; edits checked again show it here */}
-            {!asked && checked.points.length > 0 && (
-              <div className="notice">
-                <p>
-                  <b>{checked.points.length} point{checked.points.length === 1 ? " is" : "s are"} still open</b>: fix them in the Markdown tab, or copy it as it is.
-                </p>
-                <ul className="points">
-                  {checked.points.map((point) => <li key={point}>{point}</li>)}
-                </ul>
+      <main className="content">
+        <form className="write" onSubmit={checkNotes} noValidate>
+          <div className="stack" style={{ gap: 20 }}>
+            <section className="card flush composer">
+              <div className="card-head">
+                <div className="title-row">
+                  <span className="badge-num">1</span>
+                  <div>
+                    <h2>Your notes</h2>
+                    <p className="soft small">What you did, what you&apos;ll do, and any blockers. Any order is fine.</p>
+                  </div>
+                </div>
               </div>
-            )}
-            <div className="tabs" role="tablist">
-              {(["preview", "markdown"] as const).map((name) => (
-                <button key={name} type="button" role="tab" aria-selected={tab === name} onClick={() => setTab(name)}>
-                  {name === "preview" ? "Preview" : "Markdown (edit)"}
+              <textarea rows={8} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="e.g. fixed issue 95, pr 102 merged…" disabled={writing} aria-label="Your notes" />
+              <div className="card-foot">
+                <div className="row" style={{ gap: 12 }}>
+                  {/* easy to find for someone new: an accent button, and named in the empty report below */}
+                  <button type="button" className="btn sm accent" onClick={() => setNotes(SAMPLE)} disabled={writing}>
+                    <Icon name="sparkle" size={14} /> Try sample notes
+                  </button>
+                  <span className="faint small">{notes.length.toLocaleString("en-US")} / 8,000</span>
+                </div>
+                <button className="btn main" disabled={writing || !notes.trim()}>
+                  {busy === "checking" ? "Checking…" : <>Check notes <Icon name="arrow" size={14} /></>}
                 </button>
+              </div>
+            </section>
+            <p className="hint" style={{ marginTop: -10 }}>
+              <Icon name="lock" size={13} /> Don&apos;t write keys or passwords: your notes are sent to an AI service.
+            </p>
+
+            {/* the notes stay editable: Check notes again asks again */}
+            {asked && (
+              <Questions asks={asked.asks} answers={answers} onAnswer={(key, value) => setAnswers({ ...answers, [key]: value })} open={checked?.asks ?? null}
+                disabled={writing} writing={busy === "writing"} onWrite={writeWithAnswers} />
+            )}
+
+            <section className="card flush" aria-live="polite">
+              <div className="card-head">
+                <div className="title-row">
+                  <span className="badge-num">3</span>
+                  <div>
+                    <h2>Daily report</h2>
+                    <p className="soft small">How it will look in Slack. Every report you copy is saved in <Link href="/reports">My reports</Link>.</p>
+                  </div>
+                </div>
+                {written && (
+                  <div className="segmented" role="tablist">
+                    {(["preview", "markdown"] as const).map((name) => (
+                      <button key={name} type="button" role="tab" aria-selected={tab === name} onClick={() => setTab(name)}>
+                        {name === "preview" ? "Preview" : "Edit"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {error && (
+                <div className="card-body">
+                  <p className="notice bad" role="alert">{error}</p>
+                </div>
+              )}
+              {busy === "checking" && <div className="empty"><Spinner />Checking your notes…</div>}
+              {busy === "writing" && <div className="empty"><Spinner />Writing your daily report…</div>}
+              {!writing && !written && !error && (
+                <div className="empty">
+                  <span className="icon-ring"><Icon name="file" size={20} /></span>
+                  <b>{asked ? "Answer the questions first" : "Your report shows up here"}</b>
+                  <span className="small">
+                    {asked ? <>Then click <b>Write report</b>.</> : <>Write your notes and click <b>Check notes</b>. ZeeNote asks about anything missing first.</>}
+                  </span>
+                  {!asked && !notes.trim() && (
+                    <button type="button" className="btn sm accent" style={{ marginTop: 10 }} onClick={() => setNotes(SAMPLE)}>
+                      <Icon name="sparkle" size={14} /> New here? Try sample notes
+                    </button>
+                  )}
+                </div>
+              )}
+              {written && checked && (
+                <>
+                  {/* with the questions open, they show what is still open; edits checked again show it here */}
+                  {!asked && checked.points.length > 0 && (
+                    <div className="card-body" style={{ paddingBottom: 0 }}>
+                      <div className="notice">
+                        <b>{checked.points.length} point{checked.points.length === 1 ? " is" : "s are"} still open.</b> Fix them in Edit, or copy it as it is.
+                        <ul className="points">
+                          {checked.points.map((point) => <li key={point}>{point}</li>)}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+                  {tab === "preview" ? (
+                    <div className="message">
+                      <span className="avatar lg" aria-hidden="true">{me.name[0]}</span>
+                      <div>
+                        <div className="meta">
+                          <b>{me.name}</b>
+                          <span className="faint small">{new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>
+                        </div>
+                        <div className="preview" dangerouslySetInnerHTML={{ __html: rendered?.html ?? "" }} />
+                      </div>
+                    </div>
+                  ) : (
+                    <textarea className="markdown" rows={18} value={text} onChange={(event) => setText(event.target.value)} aria-label="Daily report in Markdown" />
+                  )}
+                  {toFill && <p className="error" style={{ padding: "0 20px 14px" }}>Fill in the parts in [brackets] before you post it.</p>}
+                  <div className="card-foot">
+                    <details className="grow">
+                      <summary className="row small soft" style={{ gap: 10 }}>
+                        <span className="meter" aria-hidden="true"><i style={{ width: `${run.length ? (passed / run.length) * 100 : 0}%` }} /></span>
+                        {checked.summary}
+                      </summary>
+                      <div style={{ marginTop: 12 }}>
+                        <RuleList rules={checked.rules} />
+                      </div>
+                    </details>
+                    <div className="row">
+                      {edited && (
+                        <button type="button" className="btn" onClick={checkAgain} disabled={checking}>
+                          <Icon name="refresh" size={14} /> {checking ? "Checking…" : "Check again"}
+                        </button>
+                      )}
+                      <button type="button" className="btn main" onClick={copyAndSave}>
+                        <Icon name="copy" size={14} /> Copy for Slack
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
+
+          <aside className="card stack">
+            <div>
+              <h2>Report settings</h2>
+              <p className="soft small">All fields are required. ZeeNote keeps them for your next report.</p>
+            </div>
+            <label>
+              <span>Reviewer (tagged at the top)</span>
+              <input {...field("reviewer")} value={mine.reviewer} onChange={(event) => { setMine({ ...mine, reviewer: event.target.value }); clear("reviewer"); }} placeholder="e.g. Illia" disabled={writing} />
+              {problem("reviewer")}
+            </label>
+            <label>
+              <span>Date</span>
+              <input {...field("day")} type="date" value={day} onChange={(event) => { setDay(event.target.value); clear("day"); }} disabled={writing} />
+              {problem("day")}
+            </label>
+            <div className="stack" style={{ gap: 6 }}>
+              <span id="first-section" style={{ fontSize: 13, fontWeight: 500 }}>First section</span>
+              <Select labelledBy="first-section" value={firstSection} onChange={(value) => setFirstSection(value as "Yesterday" | "Weekend")} disabled={writing}
+                options={[{ value: "Yesterday", label: "Yesterday" }, { value: "Weekend", label: "Weekend" }]} />
+            </div>
+            <div className="cols2">
+              {(["done", "plan"] as const).map((name, i) => (
+                <label key={name}>
+                  <span>{i === 0 ? firstSection : "Today"} (hours)</span>
+                  <input {...field(name)} type="number" min={0} max={24} step={0.5} value={hours[i]} disabled={writing}
+                    onChange={(event) => { setHours(i === 0 ? [event.target.value, hours[1]] : [hours[0], event.target.value]); clear(name); }} />
+                  {problem(name)}
+                </label>
               ))}
             </div>
-            {tab === "preview" ? (
-              <div className="preview" dangerouslySetInnerHTML={{ __html: rendered?.html ?? "" }} />
-            ) : (
-              <textarea rows={18} value={text} onChange={(event) => setText(event.target.value)} aria-label="Daily report in Markdown" style={{ fontFamily: "ui-monospace, monospace", fontSize: 14 }} />
-            )}
-            {toFill && <p className="error">Fill in the parts in [brackets] before you post it.</p>}
-            <details>
-              <summary className="soft">{checked.summary}</summary>
-              <RuleList rules={checked.rules} />
-            </details>
-            <div className="row between">
-              <button type="button" className="btn" onClick={checkAgain} disabled={checking || !edited}>
-                {checking ? "Checking…" : "Check again"}
-              </button>
-              <button type="button" className="btn main" onClick={copyAndSave}>
-                Copy for Slack
-              </button>
-            </div>
-          </>
-        )}
-      </section>
-      <p className="soft small">
-        Every report you copy is saved in <Link href="/reports">My reports</Link>.
-      </p>
-      {toast && <div className="toast" role="status">{toast}</div>}
+            <label>
+              <span>GitHub repo link</span>
+              <input {...field("repo")} value={mine.repo} onChange={(event) => { setMine({ ...mine, repo: event.target.value }); clear("repo"); }} placeholder="https://github.com/acme/app" disabled={writing} />
+              {problem("repo")}
+            </label>
+            <label>
+              <span>Greeting</span>
+              <textarea {...field("greeting")} rows={3} value={mine.greeting} onChange={(event) => { setMine({ ...mine, greeting: event.target.value }); clear("greeting"); }} disabled={writing} />
+              {problem("greeting")}
+            </label>
+          </aside>
+        </form>
+      </main>
+      {toast && <div className="toast" role="status"><Icon name="check" size={15} />{toast}</div>}
     </>
   );
 }

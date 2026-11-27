@@ -4,6 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { pagesOf, roleName, useSession } from "@/lib/session";
+import { Icon } from "@/components/Icon";
+import { Select } from "@/components/Select";
+import { ThemeSwitch } from "@/components/ThemeSwitch";
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const { me, team, teams, chooseTeam, signOut } = useSession();
@@ -16,50 +19,72 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="shell">
+      {open && <div className="scrim" onClick={() => setOpen(false)} aria-hidden="true" />}
       <nav className={`side ${open ? "open" : ""}`} aria-label="Menu">
         <div className="brand">
           <img src="/zeenote-mark.png" alt="" /> ZeeNote
         </div>
+        {picker ? (
+          <div className="switcher">
+            <Select label="Team" value={String(team?.id ?? "")} onChange={(id) => chooseTeam(Number(id))}
+              options={teams.map((item) => ({ value: String(item.id), label: item.name }))}
+              leading={<span className="team-mark" aria-hidden="true">{team?.name[0]}</span>} />
+          </div>
+        ) : (
+          team && !me.owner && (
+            <div className="switcher single">
+              <span className="team-mark" aria-hidden="true">{team.name[0]}</span> {team.name}
+            </div>
+          )
+        )}
         {groups.map((group) => (
-          <div key={group} className="stack" style={{ gap: 4 }}>
+          <div key={group} style={{ display: "grid", gap: 2 }}>
             <div className="group">{group}</div>
             {pages.filter((page) => page.group === group).map((page) => (
               <Link key={page.href} href={page.href} className="nav" aria-current={path.startsWith(page.href) ? "page" : undefined} onClick={() => setOpen(false)}>
-                <span aria-hidden="true">{page.icon}</span> {page.label}
+                <Icon name={page.icon} /> {page.label}
               </Link>
             ))}
           </div>
         ))}
+        <div style={{ marginTop: "auto" }}>
+          <ThemeSwitch />
+        </div>
+        <div className="side-foot" style={{ marginTop: 0 }}>
+          <span className="avatar" aria-hidden="true">{me.name[0]}</span>
+          <span className="who">
+            <b>{me.name}</b>
+            <span>{roleName(me)}</span>
+          </span>
+          <button className="btn ghost icon" onClick={signOut} aria-label="Sign out" title="Sign out">
+            <Icon name="logout" />
+          </button>
+        </div>
       </nav>
-      <div>
-        <header className="top">
-          <button className="btn sm menu-button" onClick={() => setOpen(!open)} aria-expanded={open}>
-            ☰ Menu
+      <div className="panel">
+        <div className="mobile-bar">
+          <button className="btn icon" onClick={() => setOpen(!open)} aria-expanded={open} aria-label="Menu">
+            <Icon name="menu" />
           </button>
-          {picker && (
-            <label className="row" style={{ fontWeight: 400 }}>
-              Team
-              <select value={team?.id} onChange={(event) => chooseTeam(Number(event.target.value))}>
-                {teams.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <div className="me">
-            <span className="avatar" aria-hidden="true">{me.name[0]}</span>
-            <span>
-              <b>{me.name}</b> <span className="soft small">· {roleName(me)}</span>
-            </span>
-          </div>
-          <button className="btn sm" onClick={signOut}>
-            Sign out
-          </button>
-        </header>
-        <main className="content">{children}</main>
+          <span className="brand" style={{ padding: 0 }}>
+            <img src="/zeenote-mark.png" alt="" /> ZeeNote
+          </span>
+        </div>
+        {children}
       </div>
     </div>
+  );
+}
+
+// The title row of a page, with its actions on the right, above the page's content
+export function PageHead({ title, sub, children }: { title: string; sub?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <header className="page-head">
+      <div>
+        <h1>{title}</h1>
+        {sub && <p className="sub">{sub}</p>}
+      </div>
+      {children && <div className="row">{children}</div>}
+    </header>
   );
 }

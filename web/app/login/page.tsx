@@ -3,13 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api, setToken } from "@/lib/api";
+import { Icon } from "@/components/Icon";
 
 // The first version has sample accounts only. Every one uses the same password
 const ACCOUNTS = [
-  ["owner@zeenote.com", "Company Owner (Ava)"],
-  ["manager@zeenote.com", "Team Manager (Sam), App team and Web team"],
-  ["member@zeenote.com", "Team Member (Kai), App team and Web team"],
-  ["admin@zeenote.com", "ZeeNote Admin"],
+  ["dan@zeenote.ai", "Company Owner (Dan)"],
+  ["illia@zeenote.ai", "Team Manager (Illia), Cova, Commity and AI-Training teams"],
+  ["mike@zeenote.ai", "Team Member (Mike), Cova and AI-Training teams"],
+  ["admin@zeenote.ai", "ZeeNote Admin"],
 ];
 // Shown only on this computer. Through a shared link, people get their email and the password from you
 const isLocal = () => typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname);
@@ -21,6 +22,7 @@ export default function Login() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [local, setLocal] = useState(false);
+  const [shown, setShown] = useState(false);
   useEffect(() => setLocal(isLocal()), []);
 
   async function submit(event: React.FormEvent) {
@@ -51,7 +53,12 @@ export default function Login() {
           </label>
           <label>
             Password
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
+            <span className="with-button">
+              <input type={shown ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
+              <button type="button" className="btn ghost icon" onClick={() => setShown(!shown)} aria-label={shown ? "Hide password" : "Show password"} aria-pressed={shown} title={shown ? "Hide password" : "Show password"}>
+                <Icon name={shown ? "eyeOff" : "eye"} />
+              </button>
+            </span>
           </label>
           {error && <p className="error" role="alert">{error}</p>}
           <button className="btn main" disabled={busy}>
